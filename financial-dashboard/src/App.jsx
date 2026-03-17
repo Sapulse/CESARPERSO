@@ -48,6 +48,8 @@ export default function App() {
           <Depenses
             depenses={data.depenses}
             categories={data.categories}
+            settings={data.settings}
+            updateSettings={data.updateSettings}
             addDepense={data.addDepense}
             updateDepense={data.updateDepense}
             deleteDepense={data.deleteDepense}

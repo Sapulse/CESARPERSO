@@ -234,6 +234,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
         onClose={() => setCatModal(null)}
         title={catModal?.mode === 'add' ? 'Ajouter une catégorie' : 'Modifier la catégorie'}
         size="sm"
+        confirmClose
       >
         {catModal && (
           <CategoryForm

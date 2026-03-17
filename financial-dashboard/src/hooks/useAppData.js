@@ -43,13 +43,13 @@ export function useAppData() {
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [loading, setLoading] = useState(true);
 
-  // Init : seed sample data if database is empty, then listen
+  // Init : seed sample data only on very first visit (using a persistent flag)
   useEffect(() => {
     const init = async () => {
-      const snap = await get(ref(db, 'revenus'));
+      const snap = await get(ref(db, 'initialized'));
 
       if (!snap.exists()) {
-        // First visit : write sample data + defaults
+        // First visit only : write sample data + defaults + flag
         const sampleRevenus = getSampleRevenus();
         const sampleDepenses = getSampleDepenses();
         const batch = {};
@@ -57,6 +57,7 @@ export function useAppData() {
         sampleDepenses.forEach(d => { batch[`depenses/${d.id}`] = d; });
         batch['settings'] = DEFAULT_SETTINGS;
         DEFAULT_CATEGORIES.forEach(c => { batch[`categories/${c.id}`] = c; });
+        batch['initialized'] = true;
         await update(ref(db), batch);
       }
 
