@@ -174,6 +174,7 @@ export default function Revenus({ revenus, addRevenu, updateRevenu, deleteRevenu
         open={!!modal}
         onClose={() => setModal(null)}
         title={modal?.mode === 'add' ? 'Ajouter un revenu' : 'Modifier le revenu'}
+        confirmClose
       >
         {modal && (
           <RevenuForm

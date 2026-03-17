@@ -220,7 +220,7 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
         </div>
       )}
 
-      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.mode === 'add' ? 'Ajouter une dépense' : 'Modifier la dépense'} size="lg">
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.mode === 'add' ? 'Ajouter une dépense' : 'Modifier la dépense'} size="lg" confirmClose>
         {modal && (
           <DepenseForm
             initial={modal.item}
