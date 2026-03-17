@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
-import { Plus, Pencil, Trash2, TrendingDown, Filter } from 'lucide-react';
+import { Plus, Pencil, Trash2, TrendingDown, Filter, Download, ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import Modal from '../components/shared/Modal';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 import { FREQUENCES, TYPES_DEPENSE, NATURES } from '../utils/defaults';
 import { fmt } from '../utils/calculations';
+import { downloadCSV } from '../utils/exportCSV';
 
 const EMPTY_FORM = {
   libelle: '', montant: '', date: new Date().toISOString().slice(0, 10),
@@ -76,7 +77,12 @@ function DepenseForm({ initial = EMPTY_FORM, categories, onSave, onCancel }) {
   );
 }
 
-export default function Depenses({ depenses, categories, addDepense, updateDepense, deleteDepense }) {
+function monthLabel(ym) {
+  const [y, m] = ym.split('-');
+  return new Date(+y, +m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+}
+
+export default function Depenses({ depenses, categories, settings, updateSettings, addDepense, updateDepense, deleteDepense }) {
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [search, setSearch] = useState('');
@@ -84,31 +90,10 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
   const [filterNature, setFilterNature] = useState('');
   const [filterCat, setFilterCat] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [monthFilter, setMonthFilter] = useState('');
+  const [showBudgets, setShowBudgets] = useState(false);
 
-  const totalMensuel = useMemo(() => {
-    return depenses.reduce((sum, d) => {
-      if (d.frequence === 'mensuelle') return sum + d.montant;
-      if (d.frequence === 'trimestrielle') return sum + d.montant / 3;
-      if (d.frequence === 'annuelle') return sum + d.montant / 12;
-      return sum;
-    }, 0);
-  }, [depenses]);
-
-  const filtered = useMemo(() => {
-    return depenses.filter(d => {
-      if (search && !d.libelle.toLowerCase().includes(search.toLowerCase())) return false;
-      if (filterType && d.type !== filterType) return false;
-      if (filterNature && d.nature !== filterNature) return false;
-      if (filterCat && d.categorie !== filterCat) return false;
-      return true;
-    });
-  }, [depenses, search, filterType, filterNature, filterCat]);
-
-  const handleSave = (data) => {
-    if (modal.mode === 'add') addDepense(data);
-    else updateDepense(modal.item.id, data);
-    setModal(null);
-  };
+  const budgetsCibles = settings?.budgetsCibles || {};
 
   const getCat = (id) => categories.find(c => c.id === id);
   const freqLabel = (v) => FREQUENCES.find(f => f.value === v)?.label || v;
@@ -119,6 +104,85 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
   };
   const natureBadge = (nature) => nature === 'pro' ? 'bg-blue-50 text-blue-700' : 'bg-pink-50 text-pink-700';
 
+  const filtered = useMemo(() => {
+    return depenses.filter(d => {
+      if (search && !d.libelle.toLowerCase().includes(search.toLowerCase())) return false;
+      if (filterType && d.type !== filterType) return false;
+      if (filterNature && d.nature !== filterNature) return false;
+      if (filterCat && d.categorie !== filterCat) return false;
+      if (monthFilter && d.frequence === 'ponctuelle') {
+        if (!d.date?.startsWith(monthFilter)) return false;
+      }
+      return true;
+    });
+  }, [depenses, search, filterType, filterNature, filterCat, monthFilter]);
+
+  const totalMensuel = useMemo(() => {
+    return depenses.reduce((sum, d) => {
+      if (d.frequence === 'mensuelle') return sum + d.montant;
+      if (d.frequence === 'trimestrielle') return sum + d.montant / 3;
+      if (d.frequence === 'annuelle') return sum + d.montant / 12;
+      return sum;
+    }, 0);
+  }, [depenses]);
+
+  // Budget stats: monthly equivalent per category
+  const budgetStats = useMemo(() => {
+    return categories
+      .filter(cat => budgetsCibles[cat.id] > 0)
+      .map(cat => {
+        const spent = depenses
+          .filter(d => d.categorie === cat.id)
+          .reduce((sum, d) => {
+            if (d.frequence === 'mensuelle') return sum + d.montant;
+            if (d.frequence === 'trimestrielle') return sum + d.montant / 3;
+            if (d.frequence === 'annuelle') return sum + d.montant / 12;
+            if (d.frequence === 'ponctuelle') {
+              // count ponctuelles in current month
+              const now = new Date().toISOString().slice(0, 7);
+              return d.date?.startsWith(now) ? sum + d.montant : sum;
+            }
+            return sum;
+          }, 0);
+        const budget = budgetsCibles[cat.id];
+        const pct = Math.min((spent / budget) * 100, 100);
+        return { cat, spent, budget, pct };
+      });
+  }, [categories, depenses, budgetsCibles]);
+
+  const handleSave = (data) => {
+    if (modal.mode === 'add') addDepense(data);
+    else updateDepense(modal.item.id, data);
+    setModal(null);
+  };
+
+  const handleExport = () => {
+    const rows = filtered.map(d => ({
+      Libellé: d.libelle,
+      Montant: d.montant,
+      Date: d.date,
+      Fréquence: freqLabel(d.frequence),
+      Catégorie: getCat(d.categorie)?.name || d.categorie,
+      Type: d.type,
+      Nature: d.nature,
+      Note: d.note || '',
+    }));
+    const name = monthFilter ? `depenses_${monthFilter}.csv` : 'depenses.csv';
+    downloadCSV(rows, name);
+  };
+
+  const changeMonth = (delta) => {
+    const base = monthFilter || new Date().toISOString().slice(0, 7);
+    const [y, m] = base.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    setMonthFilter(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const setBudget = (catId, value) => {
+    const updated = { ...budgetsCibles, [catId]: parseFloat(value) || 0 };
+    updateSettings({ budgetsCibles: updated });
+  };
+
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto pb-24 md:pb-6">
       <div className="flex items-center justify-between mb-6">
@@ -126,15 +190,99 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
           <h2 className="text-xl font-bold text-gray-900">Dépenses</h2>
           <p className="text-sm text-gray-500 mt-0.5">Équivalent mensuel : <span className="font-semibold text-red-600">{fmt(totalMensuel)}</span></p>
         </div>
-        <button className="btn-primary" onClick={() => setModal({ mode: 'add' })}>
-          <Plus size={16} /> Ajouter
-        </button>
+        <div className="flex gap-2">
+          <button
+            className={`btn-secondary gap-1 ${showBudgets ? 'bg-orange-50 text-orange-600 border-orange-200' : ''}`}
+            onClick={() => setShowBudgets(v => !v)}
+            title="Budgets par catégorie"
+          >
+            <Target size={14} />
+            <span className="hidden sm:inline">Budgets</span>
+          </button>
+          <button className="btn-secondary gap-1" onClick={handleExport} title="Exporter en CSV">
+            <Download size={14} />
+            <span className="hidden sm:inline">CSV</span>
+          </button>
+          <button className="btn-primary" onClick={() => setModal({ mode: 'add' })}>
+            <Plus size={16} /> Ajouter
+          </button>
+        </div>
       </div>
+
+      {/* Budget section */}
+      {showBudgets && (
+        <div className="card mb-4 border-orange-100 bg-orange-50/30">
+          <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+            <Target size={16} className="text-orange-500" /> Budgets par catégorie
+          </h3>
+          <p className="text-xs text-gray-500 mb-4">Définir un budget mensuel par catégorie. Laissez 0 pour désactiver.</p>
+
+          {budgetStats.length > 0 && (
+            <div className="space-y-3 mb-4">
+              {budgetStats.map(({ cat, spent, budget, pct }) => {
+                const color = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-orange-400' : 'bg-green-500';
+                const textColor = pct >= 100 ? 'text-red-600' : pct >= 80 ? 'text-orange-600' : 'text-green-600';
+                return (
+                  <div key={cat.id}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
+                        <span className="text-sm font-medium text-gray-800">{cat.name}</span>
+                      </div>
+                      <span className={`text-xs font-semibold ${textColor}`}>
+                        {fmt(spent)} / {fmt(budget)}
+                        {pct >= 100 && ' ⚠️'}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {categories.map(cat => (
+              <div key={cat.id} className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-gray-100">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
+                <span className="text-xs text-gray-700 flex-1 truncate">{cat.name}</span>
+                <div className="flex items-center gap-0.5">
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    className="w-16 text-xs text-right border border-gray-200 rounded-lg px-1.5 py-1 outline-none focus:border-blue-400"
+                    placeholder="0"
+                    value={budgetsCibles[cat.id] || ''}
+                    onChange={e => setBudget(cat.id, e.target.value)}
+                  />
+                  <span className="text-xs text-gray-400">€</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search + Filters */}
       <div className="mb-4 space-y-2">
-        <div className="flex gap-2">
-          <input className="input flex-1" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="flex gap-2 flex-wrap">
+          <input className="input flex-1 min-w-40" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl px-2">
+            <button className="p-1.5 hover:text-blue-600 transition-colors" onClick={() => changeMonth(-1)}><ChevronLeft size={16} /></button>
+            <input
+              type="month"
+              className="text-sm text-gray-700 bg-transparent border-none outline-none py-2 w-36 text-center"
+              value={monthFilter}
+              onChange={e => setMonthFilter(e.target.value)}
+            />
+            <button className="p-1.5 hover:text-blue-600 transition-colors" onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
+            {monthFilter && (
+              <button className="text-xs text-gray-400 hover:text-red-500 px-1" onClick={() => setMonthFilter('')}>✕</button>
+            )}
+          </div>
           <button className={`btn-secondary gap-1 ${showFilters ? 'bg-blue-50 text-blue-600' : ''}`} onClick={() => setShowFilters(v => !v)}>
             <Filter size={14} /> Filtres
           </button>
@@ -157,6 +305,12 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
         )}
       </div>
 
+      {monthFilter && (
+        <p className="text-xs text-blue-600 mb-3 font-medium">
+          Affichage : {monthLabel(monthFilter)} — récurrents toujours visibles
+        </p>
+      )}
+
       {/* Summary */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         <div className="card bg-indigo-50 border-indigo-100">
@@ -169,7 +323,7 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
         </div>
         <div className="card">
           <p className="text-xs text-gray-500 mb-1">Total lignes</p>
-          <p className="text-xl font-bold text-gray-900">{depenses.length}</p>
+          <p className="text-xl font-bold text-gray-900">{filtered.length}</p>
         </div>
       </div>
 
@@ -178,7 +332,7 @@ export default function Depenses({ depenses, categories, addDepense, updateDepen
         <div className="card text-center py-12 text-gray-400">
           <TrendingDown size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">Aucune dépense{search || filterType || filterNature || filterCat ? ' correspondante' : ''}</p>
-          {!search && !filterType && !filterNature && !filterCat && (
+          {!search && !filterType && !filterNature && !filterCat && !monthFilter && (
             <button className="btn-primary mt-4" onClick={() => setModal({ mode: 'add' })}>
               <Plus size={16} /> Ajouter une dépense
             </button>
