@@ -1,19 +1,31 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ref, onValue, set, remove, update, get } from 'firebase/database';
-import { db } from '../firebase';
 import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from '../utils/defaults';
 
-// Convert Firebase object { id1: {...}, id2: {...} } → array [{ id, ...}, ...]
-function toArray(obj) {
-  if (!obj) return [];
-  return Object.entries(obj).map(([id, value]) => ({ ...value, id }));
-}
+const KEYS = {
+  revenus: 'fp_revenus',
+  depenses: 'fp_depenses',
+  settings: 'fp_settings',
+  categories: 'fp_categories',
+  initialized: 'fp_initialized',
+};
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-// Sample data injected on first load
+function load(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
 function getSampleRevenus() {
   const m = new Date().toISOString().slice(0, 7);
   return [
@@ -37,106 +49,93 @@ function getSampleDepenses() {
 }
 
 export function useAppData() {
-  const [revenus, setRevenus] = useState([]);
-  const [depenses, setDepenses] = useState([]);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [revenus, setRevenus] = useState(() => {
+    if (!localStorage.getItem(KEYS.initialized)) return [];
+    return load(KEYS.revenus, []);
+  });
+
+  const [depenses, setDepenses] = useState(() => {
+    if (!localStorage.getItem(KEYS.initialized)) return [];
+    return load(KEYS.depenses, []);
+  });
+
+  const [settings, setSettings] = useState(() =>
+    load(KEYS.settings, DEFAULT_SETTINGS)
+  );
+
+  const [categories, setCategories] = useState(() =>
+    load(KEYS.categories, DEFAULT_CATEGORIES)
+  );
+
   const [loading, setLoading] = useState(true);
 
-  // Init : seed sample data only on very first visit (using a persistent flag)
+  // Seed sample data on very first visit
   useEffect(() => {
-    const init = async () => {
-      const snap = await get(ref(db, 'initialized'));
-
-      if (!snap.exists()) {
-        // First visit only : write sample data + defaults + flag
-        const sampleRevenus = getSampleRevenus();
-        const sampleDepenses = getSampleDepenses();
-        const batch = {};
-        sampleRevenus.forEach(r => { batch[`revenus/${r.id}`] = r; });
-        sampleDepenses.forEach(d => { batch[`depenses/${d.id}`] = d; });
-        batch['settings'] = DEFAULT_SETTINGS;
-        DEFAULT_CATEGORIES.forEach(c => { batch[`categories/${c.id}`] = c; });
-        batch['initialized'] = true;
-        await update(ref(db), batch);
-      }
-
-      // Real-time listeners
-      const unsubRevenus = onValue(ref(db, 'revenus'), (s) => {
-        setRevenus(toArray(s.val()));
-      });
-
-      const unsubDepenses = onValue(ref(db, 'depenses'), (s) => {
-        setDepenses(toArray(s.val()));
-      });
-
-      const unsubSettings = onValue(ref(db, 'settings'), (s) => {
-        if (s.exists()) setSettings(s.val());
-      });
-
-      const unsubCategories = onValue(ref(db, 'categories'), (s) => {
-        setCategories(toArray(s.val()));
-        setLoading(false);
-      });
-
-      return () => {
-        unsubRevenus();
-        unsubDepenses();
-        unsubSettings();
-        unsubCategories();
-      };
-    };
-
-    let cleanup = () => {};
-    init().then(fn => { if (fn) cleanup = fn; });
-    return () => cleanup();
+    if (!localStorage.getItem(KEYS.initialized)) {
+      const sampleRevenus = getSampleRevenus();
+      const sampleDepenses = getSampleDepenses();
+      save(KEYS.revenus, sampleRevenus);
+      save(KEYS.depenses, sampleDepenses);
+      save(KEYS.settings, DEFAULT_SETTINGS);
+      save(KEYS.categories, DEFAULT_CATEGORIES);
+      localStorage.setItem(KEYS.initialized, 'true');
+      setRevenus(sampleRevenus);
+      setDepenses(sampleDepenses);
+    }
+    setLoading(false);
   }, []);
+
+  // Persist to localStorage on every change
+  useEffect(() => { if (!loading) save(KEYS.revenus, revenus); }, [revenus, loading]);
+  useEffect(() => { if (!loading) save(KEYS.depenses, depenses); }, [depenses, loading]);
+  useEffect(() => { if (!loading) save(KEYS.settings, settings); }, [settings, loading]);
+  useEffect(() => { if (!loading) save(KEYS.categories, categories); }, [categories, loading]);
 
   // --- Revenus CRUD ---
   const addRevenu = useCallback((data) => {
     const id = uid();
-    set(ref(db, `revenus/${id}`), { ...data, id });
+    setRevenus(prev => [...prev, { ...data, id }]);
   }, []);
 
   const updateRevenu = useCallback((id, data) => {
-    update(ref(db, `revenus/${id}`), data);
+    setRevenus(prev => prev.map(r => r.id === id ? { ...r, ...data } : r));
   }, []);
 
   const deleteRevenu = useCallback((id) => {
-    remove(ref(db, `revenus/${id}`));
+    setRevenus(prev => prev.filter(r => r.id !== id));
   }, []);
 
   // --- Depenses CRUD ---
   const addDepense = useCallback((data) => {
     const id = uid();
-    set(ref(db, `depenses/${id}`), { ...data, id });
+    setDepenses(prev => [...prev, { ...data, id }]);
   }, []);
 
   const updateDepense = useCallback((id, data) => {
-    update(ref(db, `depenses/${id}`), data);
+    setDepenses(prev => prev.map(d => d.id === id ? { ...d, ...data } : d));
   }, []);
 
   const deleteDepense = useCallback((id) => {
-    remove(ref(db, `depenses/${id}`));
+    setDepenses(prev => prev.filter(d => d.id !== id));
   }, []);
 
   // --- Settings ---
   const updateSettings = useCallback((data) => {
-    update(ref(db, 'settings'), data);
+    setSettings(prev => ({ ...prev, ...data }));
   }, []);
 
   // --- Categories CRUD ---
   const addCategory = useCallback((data) => {
     const id = uid();
-    set(ref(db, `categories/${id}`), { ...data, id });
+    setCategories(prev => [...prev, { ...data, id }]);
   }, []);
 
   const updateCategory = useCallback((id, data) => {
-    update(ref(db, `categories/${id}`), data);
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
   }, []);
 
   const deleteCategory = useCallback((id) => {
-    remove(ref(db, `categories/${id}`));
+    setCategories(prev => prev.filter(c => c.id !== id));
   }, []);
 
   return {
