@@ -30,11 +30,32 @@ function parseDate(raw) {
 
 function parseAmount(raw) {
   if (raw === null || raw === undefined || raw === '') return null;
+  // Remove quotes and whitespace (spaces used as thousands separator in French)
   let s = String(raw).trim().replace(/"/g, '').replace(/\s/g, '');
   if (!s) return null;
-  // French decimal: last comma/dot is decimal separator
-  // e.g. "1 234,56" or "1.234,56" or "1234.56"
-  s = s.replace(/\./g, '').replace(',', '.');
+
+  const lastDot = s.lastIndexOf('.');
+  const lastComma = s.lastIndexOf(',');
+
+  if (lastDot !== -1 && lastComma !== -1) {
+    // Both present — whichever comes last is the decimal separator.
+    // "1.234,56" → comma last → comma = decimal
+    // "1,234.56" → dot last   → dot   = decimal
+    if (lastDot > lastComma) {
+      s = s.replace(/,/g, '');           // remove thousands commas, keep dot
+    } else {
+      s = s.replace(/\./g, '').replace(',', '.'); // remove thousands dots, comma → dot
+    }
+  } else if (lastComma !== -1) {
+    // Only comma present → always decimal separator
+    // "-48,15" → "-48.15"   |   "-1 234,56" (spaces already removed) → "-1234.56"
+    s = s.replace(',', '.');
+  }
+  // Only dot (or no separator): keep as-is
+  // "-48.15" stays "-48.15"  |  "-4815" stays "-4815"
+
+  // Strip anything that isn't a digit, minus or decimal dot
+  s = s.replace(/[^\d.-]/g, '');
   const n = parseFloat(s);
   return isNaN(n) ? null : n;
 }
