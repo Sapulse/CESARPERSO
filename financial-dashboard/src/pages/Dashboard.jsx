@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
-import { Wallet, TrendingUp, TrendingDown, Shield, Clock, BarChart2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, Shield, Clock, AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import KPICard from '../components/shared/KPICard';
 import { calcCurrentMonthStats, buildProjection, calcDepensesParCategorie, fmt } from '../utils/calculations';
-import { addMonths } from 'date-fns';
+import { TYPES_COMPTE } from '../utils/defaults';
 
-export default function Dashboard({ revenus, depenses, settings, categories, onNavigate }) {
+export default function Dashboard({ revenus, depenses, settings, categories, comptes, transactions, onNavigate }) {
   const stats = useMemo(() => calcCurrentMonthStats(revenus, depenses, settings), [revenus, depenses, settings]);
   const projection = useMemo(() => buildProjection(revenus, depenses, settings, 6), [revenus, depenses, settings]);
   const topCats = useMemo(() => calcDepensesParCategorie(depenses, categories, new Date()), [depenses, categories]);
@@ -17,7 +17,6 @@ export default function Dashboard({ revenus, depenses, settings, categories, onN
     const now = new Date();
     let fixe = 0, variable = 0, ponctuelle = 0;
     depenses.forEach(d => {
-      const m = d.frequence === 'ponctuelle' ? 'ponctuelle' : d.type;
       const val = d.frequence === 'mensuelle' ? d.montant
         : d.frequence === 'trimestrielle' ? d.montant / 3
         : d.frequence === 'annuelle' ? d.montant / 12
@@ -32,6 +31,17 @@ export default function Dashboard({ revenus, depenses, settings, categories, onN
       { name: 'Ponctuelles', value: Math.round(ponctuelle), fill: '#10b981' },
     ].filter(d => d.value > 0);
   }, [depenses]);
+
+  // Recent transactions (last 5)
+  const recentTransactions = useMemo(() => {
+    return [...(transactions || [])]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 5);
+  }, [transactions]);
+
+  const totalSoldeComptes = useMemo(() =>
+    (comptes || []).reduce((s, c) => s + (parseFloat(c.solde) || 0), 0),
+  [comptes]);
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto pb-24 md:pb-6">
@@ -112,13 +122,46 @@ export default function Dashboard({ revenus, depenses, settings, categories, onN
               {isFinite(stats.autonomie) ? `${stats.autonomie.toFixed(1)} mois` : '∞'}
             </p>
             <p className="text-xs text-gray-500 mt-0.5">
-              {autonomieOk ? <span className="flex items-center gap-1 text-green-600"><CheckCircle2 size={11} /> Situation saine</span>
-               : autonomieWarn ? <span className="text-orange-600">Vigilance recommandée</span>
-               : <span className="text-red-600">⚠ Situation critique</span>}
+              {autonomieOk
+                ? <span className="flex items-center gap-1 text-green-600"><CheckCircle2 size={11} /> Situation saine</span>
+                : autonomieWarn
+                  ? <span className="text-orange-600">Vigilance recommandée</span>
+                  : <span className="text-red-600">⚠ Situation critique</span>}
             </p>
           </div>
         </div>
       </div>
+
+      {/* Comptes bancaires */}
+      {(comptes || []).length > 0 && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="font-semibold text-gray-900 text-sm">Comptes bancaires</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Total consolidé : <span className="font-semibold text-blue-600">{fmt(totalSoldeComptes)}</span>
+              </p>
+            </div>
+            <button onClick={() => onNavigate('import')} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+              <Upload size={12} /> Importer →
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {(comptes || []).map(compte => (
+              <div key={compte.id} className="flex items-center gap-2.5 bg-gray-50 rounded-xl px-3 py-2.5">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: compte.couleur || '#3b82f6' }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-700 truncate">{compte.nom}</p>
+                  <p className="text-[10px] text-gray-400 truncate">{compte.banque || TYPES_COMPTE.find(t => t.value === compte.type)?.label}</p>
+                </div>
+                <span className={`text-sm font-bold shrink-0 ${(compte.solde || 0) >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  {fmt(compte.solde || 0)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -138,7 +181,7 @@ export default function Dashboard({ revenus, depenses, settings, categories, onN
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
               <Tooltip formatter={(v) => fmt(v)} labelStyle={{ fontWeight: 600 }} />
               <Area type="monotone" dataKey="solde" stroke="#3b82f6" fill="url(#gradBlue)" strokeWidth={2} name="Solde" />
             </AreaChart>
@@ -169,34 +212,76 @@ export default function Dashboard({ revenus, depenses, settings, categories, onN
         </div>
       </div>
 
-      {/* Top dépenses */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-900 text-sm">Top postes de dépenses (mois en cours)</h3>
-          <button onClick={() => onNavigate('depenses')} className="text-xs text-blue-600 hover:underline">Gérer →</button>
-        </div>
-        {topCats.length === 0 ? (
-          <p className="text-sm text-gray-400">Aucune dépense ce mois-ci.</p>
-        ) : (
-          <div className="space-y-2">
-            {topCats.slice(0, 6).map((cat) => {
-              const pct = stats.depensesMois > 0 ? (cat.total / stats.depensesMois) * 100 : 0;
-              return (
-                <div key={cat.id} className="flex items-center gap-3">
-                  <div className="w-24 shrink-0 flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
-                    <span className="text-xs text-gray-700 truncate">{cat.name}</span>
-                  </div>
-                  <div className="flex-1 bg-gray-100 rounded-full h-2">
-                    <div className="h-2 rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%`, background: cat.color }} />
-                  </div>
-                  <span className="text-xs font-medium text-gray-700 w-16 text-right">{fmt(cat.total)}</span>
-                  <span className="text-xs text-gray-400 w-10 text-right">{pct.toFixed(0)}%</span>
-                </div>
-              );
-            })}
+      {/* Bottom row: top dépenses + dernières transactions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Top dépenses */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-900 text-sm">Top postes de dépenses</h3>
+            <button onClick={() => onNavigate('depenses')} className="text-xs text-blue-600 hover:underline">Gérer →</button>
           </div>
-        )}
+          {topCats.length === 0 ? (
+            <p className="text-sm text-gray-400">Aucune dépense ce mois-ci.</p>
+          ) : (
+            <div className="space-y-2">
+              {topCats.slice(0, 6).map((cat) => {
+                const pct = stats.depensesMois > 0 ? (cat.total / stats.depensesMois) * 100 : 0;
+                return (
+                  <div key={cat.id} className="flex items-center gap-3">
+                    <div className="w-24 shrink-0 flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
+                      <span className="text-xs text-gray-700 truncate">{cat.name}</span>
+                    </div>
+                    <div className="flex-1 bg-gray-100 rounded-full h-2">
+                      <div className="h-2 rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%`, background: cat.color }} />
+                    </div>
+                    <span className="text-xs font-medium text-gray-700 w-16 text-right">{fmt(cat.total)}</span>
+                    <span className="text-xs text-gray-400 w-10 text-right">{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Dernières transactions importées */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-900 text-sm">Dernières transactions</h3>
+            <button onClick={() => onNavigate('import')} className="text-xs text-blue-600 hover:underline">Voir tout →</button>
+          </div>
+          {recentTransactions.length === 0 ? (
+            <div className="text-center py-6">
+              <p className="text-sm text-gray-400 mb-2">Aucune transaction importée.</p>
+              <button
+                onClick={() => onNavigate('import')}
+                className="btn-secondary text-xs"
+              >
+                <Upload size={13} /> Importer un relevé
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {recentTransactions.map(tx => {
+                const compte = (comptes || []).find(c => c.id === tx.compteId);
+                return (
+                  <div key={tx.id} className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate">{tx.libelle}</p>
+                      <p className="text-[10px] text-gray-400">
+                        {new Date(tx.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                        {compte ? ` · ${compte.nom}` : ''}
+                      </p>
+                    </div>
+                    <span className={`text-sm font-semibold shrink-0 ${tx.montant >= 0 ? 'text-green-600' : 'text-gray-700'}`}>
+                      {tx.montant >= 0 ? '+' : ''}{fmt(tx.montant)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

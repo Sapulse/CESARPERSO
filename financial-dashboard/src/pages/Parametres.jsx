@@ -3,14 +3,15 @@ import { Plus, Pencil, Trash2, Save, RotateCcw } from 'lucide-react';
 import Modal from '../components/shared/Modal';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 import { fmt } from '../utils/calculations';
-import { DEFAULT_CATEGORIES } from '../utils/defaults';
+import { DEFAULT_CATEGORIES, TYPES_COMPTE } from '../utils/defaults';
 
 const HEX_COLORS = [
   '#6366f1','#3b82f6','#06b6d4','#10b981','#22c55e',
   '#f59e0b','#f97316','#ef4444','#ec4899','#8b5cf6',
-  '#14b8a6','#0ea5e9','#a855f7','#dc2626','#64748b'
+  '#14b8a6','#0ea5e9','#a855f7','#dc2626','#64748b',
 ];
 
+// ─── Category form ────────────────────────────────────────────────────────────
 function CategoryForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || '');
   const [color, setColor] = useState(initial?.color || '#6366f1');
@@ -19,7 +20,7 @@ function CategoryForm({ initial, onSave, onCancel }) {
     <div className="space-y-4">
       <div>
         <label className="label">Nom de la catégorie *</label>
-        <input className="input" placeholder="Ex: Alimentation" value={name} onChange={e => setName(e.target.value)} required />
+        <input className="input" placeholder="Ex: Alimentation" value={name} onChange={e => setName(e.target.value)} />
       </div>
       <div>
         <label className="label">Couleur</label>
@@ -36,7 +37,7 @@ function CategoryForm({ initial, onSave, onCancel }) {
       </div>
       <div className="flex gap-2 pt-2">
         <button className="btn-secondary flex-1" onClick={onCancel}>Annuler</button>
-        <button className="btn-primary flex-1" onClick={() => { if (!name) return; onSave({ name, color }); }} disabled={!name}>
+        <button className="btn-primary flex-1" disabled={!name} onClick={() => { if (name) onSave({ name, color }); }}>
           Enregistrer
         </button>
       </div>
@@ -44,22 +45,95 @@ function CategoryForm({ initial, onSave, onCancel }) {
   );
 }
 
-export default function Parametres({ settings, updateSettings, categories, addCategory, updateCategory, deleteCategory }) {
+// ─── Compte form ──────────────────────────────────────────────────────────────
+function CompteForm({ initial, onSave, onCancel }) {
+  const [nom, setNom] = useState(initial?.nom || '');
+  const [banque, setBanque] = useState(initial?.banque || '');
+  const [type, setType] = useState(initial?.type || 'courant');
+  const [solde, setSolde] = useState(initial?.solde ?? 0);
+  const [couleur, setCouleur] = useState(initial?.couleur || '#3b82f6');
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="label">Nom du compte *</label>
+        <input className="input" placeholder="Ex: Compte courant BNP" value={nom} onChange={e => setNom(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Banque</label>
+          <input className="input" placeholder="Ex: BNP Paribas" value={banque} onChange={e => setBanque(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Type</label>
+          <select className="input" value={type} onChange={e => setType(e.target.value)}>
+            {TYPES_COMPTE.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Solde actuel (€)</label>
+          <input className="input" type="number" step="0.01" value={solde} onChange={e => setSolde(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Couleur</label>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {HEX_COLORS.slice(0, 8).map(c => (
+              <button
+                key={c}
+                onClick={() => setCouleur(c)}
+                className={`w-6 h-6 rounded-full border-2 transition-all ${couleur === c ? 'border-gray-900 scale-110' : 'border-transparent'}`}
+                style={{ background: c }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2 pt-2">
+        <button className="btn-secondary flex-1" onClick={onCancel}>Annuler</button>
+        <button
+          className="btn-primary flex-1"
+          disabled={!nom}
+          onClick={() => {
+            if (!nom) return;
+            onSave({ nom, banque, type, solde: parseFloat(solde) || 0, couleur, actif: true });
+          }}
+        >
+          Enregistrer
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+export default function Parametres({
+  settings, updateSettings,
+  categories, addCategory, updateCategory, deleteCategory,
+  comptes, addCompte, updateCompte, deleteCompte,
+}) {
   const [catModal, setCatModal] = useState(null);
+  const [compteModal, setCompteModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteCompteTarget, setDeleteCompteTarget] = useState(null);
   const [localSettings, setLocalSettings] = useState({ ...settings });
   const [saved, setSaved] = useState(false);
 
   const setS = (k, v) => setLocalSettings(p => ({ ...p, [k]: v }));
 
   const handleSaveSettings = () => {
-    updateSettings({ ...localSettings, soldeInitial: parseFloat(localSettings.soldeInitial) || 0, seuilAlerte: parseFloat(localSettings.seuilAlerte) || 0 });
+    updateSettings({
+      ...localSettings,
+      soldeInitial: parseFloat(localSettings.soldeInitial) || 0,
+      seuilAlerte: parseFloat(localSettings.seuilAlerte) || 0,
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
   const updateTaux = (id, field, value) => {
-    const updated = localSettings.tauxCharges.map(t => t.id === id ? { ...t, [field]: field === 'taux' ? parseFloat(value) || 0 : value } : t);
+    const updated = localSettings.tauxCharges.map(t =>
+      t.id === id ? { ...t, [field]: field === 'taux' ? parseFloat(value) || 0 : value } : t
+    );
     setS('tauxCharges', updated);
   };
 
@@ -68,11 +142,13 @@ export default function Parametres({ settings, updateSettings, categories, addCa
     setS('tauxCharges', [...localSettings.tauxCharges, newTaux]);
   };
 
-  const removeTaux = (id) => {
-    setS('tauxCharges', localSettings.tauxCharges.filter(t => t.id !== id));
-  };
+  const removeTaux = (id) => setS('tauxCharges', localSettings.tauxCharges.filter(t => t.id !== id));
 
-  const totalTaux = localSettings.tauxCharges.filter(t => t.actif).reduce((s, t) => s + (parseFloat(t.taux) || 0), 0);
+  const totalTaux = localSettings.tauxCharges
+    .filter(t => t.actif)
+    .reduce((s, t) => s + (parseFloat(t.taux) || 0), 0);
+
+  const totalSoldeComptes = (comptes || []).reduce((s, c) => s + (parseFloat(c.solde) || 0), 0);
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto pb-24 md:pb-6">
@@ -81,12 +157,53 @@ export default function Parametres({ settings, updateSettings, categories, addCa
         <p className="text-sm text-gray-500 mt-0.5">Configuration de votre tableau de bord</p>
       </div>
 
-      {/* Section trésorerie */}
+      {/* ── Comptes bancaires ───────────────────────────────────── */}
+      <div className="card mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-semibold text-gray-900">Comptes bancaires</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {(comptes || []).length} compte{(comptes || []).length > 1 ? 's' : ''} —{' '}
+              Total : <span className="font-semibold text-blue-600">{fmt(totalSoldeComptes)}</span>
+            </p>
+          </div>
+          <button className="btn-primary text-xs" onClick={() => setCompteModal({ mode: 'add' })}>
+            <Plus size={14} /> Ajouter
+          </button>
+        </div>
+        <div className="space-y-2">
+          {(comptes || []).map(compte => (
+            <div key={compte.id} className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2.5">
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: compte.couleur || '#3b82f6' }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">{compte.nom}</p>
+                <p className="text-xs text-gray-400 truncate">
+                  {compte.banque || '—'} · {TYPES_COMPTE.find(t => t.value === compte.type)?.label || compte.type}
+                </p>
+              </div>
+              <span className={`text-sm font-semibold shrink-0 ${(compte.solde || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {fmt(compte.solde || 0)}
+              </span>
+              <button className="btn-ghost p-1 text-gray-400 hover:text-gray-700" onClick={() => setCompteModal({ mode: 'edit', item: compte })}>
+                <Pencil size={13} />
+              </button>
+              <button className="btn-ghost p-1 text-gray-400 hover:text-red-500" onClick={() => setDeleteCompteTarget(compte)}>
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+          {(comptes || []).length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">Aucun compte. Ajoutez votre première banque.</p>
+          )}
+        </div>
+      </div>
+
+      {/* ── Trésorerie ───────────────────────────────────────────── */}
       <div className="card mb-4">
         <h3 className="font-semibold text-gray-900 mb-4">Trésorerie de départ</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="label">Solde actuel (€)</label>
+            <label className="label">Solde global (€)</label>
             <input
               className="input"
               type="number"
@@ -94,7 +211,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
               value={localSettings.soldeInitial}
               onChange={e => setS('soldeInitial', e.target.value)}
             />
-            <p className="text-xs text-gray-400 mt-1">Votre solde de trésorerie aujourd'hui</p>
+            <p className="text-xs text-gray-400 mt-1">Utilisé pour les projections</p>
           </div>
           <div>
             <label className="label">Seuil d'alerte (€)</label>
@@ -105,7 +222,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
               value={localSettings.seuilAlerte}
               onChange={e => setS('seuilAlerte', e.target.value)}
             />
-            <p className="text-xs text-gray-400 mt-1">Alerte si le solde passe en dessous</p>
+            <p className="text-xs text-gray-400 mt-1">Alerte si solde en dessous</p>
           </div>
         </div>
         <div className="mt-4">
@@ -115,7 +232,11 @@ export default function Parametres({ settings, updateSettings, categories, addCa
               <button
                 key={h}
                 onClick={() => setS('horizonProjection', h)}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${localSettings.horizonProjection === h ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${
+                  localSettings.horizonProjection === h
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-gray-200 text-gray-600 hover:border-blue-300'
+                }`}
               >
                 {h} mois
               </button>
@@ -124,7 +245,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
         </div>
       </div>
 
-      {/* Taux de charges */}
+      {/* ── Taux de charges ──────────────────────────────────────── */}
       <div className="card mb-4">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -154,10 +275,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
               <div className="flex items-center gap-1.5">
                 <input
                   className="input w-20 bg-white text-sm text-right"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
+                  type="number" min="0" max="100" step="0.1"
                   value={t.taux}
                   onChange={e => updateTaux(t.id, 'taux', e.target.value)}
                 />
@@ -168,13 +286,13 @@ export default function Parametres({ settings, updateSettings, categories, addCa
               </button>
             </div>
           ))}
+          {localSettings.tauxCharges.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">Aucune charge configurée</p>
+          )}
         </div>
-        {localSettings.tauxCharges.length === 0 && (
-          <p className="text-sm text-gray-400 text-center py-4">Aucune charge configurée</p>
-        )}
       </div>
 
-      {/* Save button */}
+      {/* ── Save button ──────────────────────────────────────────── */}
       <div className="flex justify-end gap-2 mb-6">
         <button className="btn-secondary" onClick={() => setLocalSettings({ ...settings })}>
           <RotateCcw size={14} /> Annuler
@@ -187,7 +305,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
         </button>
       </div>
 
-      {/* Categories */}
+      {/* ── Categories ───────────────────────────────────────────── */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -228,7 +346,7 @@ export default function Parametres({ settings, updateSettings, categories, addCa
         </div>
       </div>
 
-      {/* Category Modal */}
+      {/* ── Modals ───────────────────────────────────────────────── */}
       <Modal
         open={!!catModal}
         onClose={() => setCatModal(null)}
@@ -249,12 +367,40 @@ export default function Parametres({ settings, updateSettings, categories, addCa
         )}
       </Modal>
 
+      <Modal
+        open={!!compteModal}
+        onClose={() => setCompteModal(null)}
+        title={compteModal?.mode === 'add' ? 'Ajouter un compte' : 'Modifier le compte'}
+        size="sm"
+        confirmClose
+      >
+        {compteModal && (
+          <CompteForm
+            initial={compteModal.item}
+            onSave={(data) => {
+              if (compteModal.mode === 'add') addCompte(data);
+              else updateCompte(compteModal.item.id, data);
+              setCompteModal(null);
+            }}
+            onCancel={() => setCompteModal(null)}
+          />
+        )}
+      </Modal>
+
       <ConfirmDialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => { deleteCategory(deleteTarget.id); setDeleteTarget(null); }}
         title="Supprimer la catégorie"
-        message={`Supprimer la catégorie "${deleteTarget?.name}" ? Les dépenses associées ne seront pas supprimées.`}
+        message={`Supprimer "${deleteTarget?.name}" ? Les dépenses associées ne seront pas supprimées.`}
+      />
+
+      <ConfirmDialog
+        open={!!deleteCompteTarget}
+        onClose={() => setDeleteCompteTarget(null)}
+        onConfirm={() => { deleteCompte(deleteCompteTarget.id); setDeleteCompteTarget(null); }}
+        title="Supprimer le compte"
+        message={`Supprimer le compte "${deleteCompteTarget?.nom}" ? Les transactions rattachées resteront en base.`}
       />
     </div>
   );

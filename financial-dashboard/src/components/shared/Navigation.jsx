@@ -1,13 +1,15 @@
-import { LayoutDashboard, TrendingUp, TrendingDown, BarChart2, Settings } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, TrendingDown, BarChart2, Settings, Upload } from 'lucide-react';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'revenus', label: 'Revenus', icon: TrendingUp },
   { id: 'depenses', label: 'Dépenses', icon: TrendingDown },
   { id: 'previsionnel', label: 'Prévisionnel', icon: BarChart2 },
+  { id: 'import', label: 'Import', icon: Upload },
   { id: 'parametres', label: 'Paramètres', icon: Settings },
 ];
 
+// Mobile shows all 6 items with slightly smaller text
 export default function Navigation({ currentPage, onNavigate }) {
   return (
     <>
@@ -41,12 +43,12 @@ export default function Navigation({ currentPage, onNavigate }) {
           <button
             key={id}
             onClick={() => onNavigate(id)}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs font-medium transition-all ${
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 font-medium transition-all ${
               currentPage === id ? 'text-blue-600' : 'text-gray-400'
             }`}
           >
-            <Icon size={20} />
-            <span className="text-[10px] leading-tight">{label}</span>
+            <Icon size={18} />
+            <span className="text-[9px] leading-tight">{label}</span>
           </button>
         ))}
       </nav>

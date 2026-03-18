@@ -50,3 +50,22 @@ export const TYPES_REVENU = [
   { value: 'client', label: 'Paiement client' },
   { value: 'autre', label: 'Autre rentrée' },
 ];
+
+export const DEFAULT_COMPTES = [
+  {
+    id: 'compte_principal',
+    nom: 'Compte courant',
+    banque: 'Banque principale',
+    type: 'courant',
+    couleur: '#3b82f6',
+    solde: 0,
+    actif: true,
+  },
+];
+
+export const TYPES_COMPTE = [
+  { value: 'courant', label: 'Compte courant' },
+  { value: 'epargne', label: 'Épargne' },
+  { value: 'pro', label: 'Professionnel' },
+  { value: 'joint', label: 'Compte joint' },
+];

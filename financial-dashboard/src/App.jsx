@@ -5,6 +5,7 @@ import Revenus from './pages/Revenus';
 import Depenses from './pages/Depenses';
 import Previsionnel from './pages/Previsionnel';
 import Parametres from './pages/Parametres';
+import Import from './pages/Import';
 import { useAppData } from './hooks/useAppData';
 
 export default function App() {
@@ -31,6 +32,8 @@ export default function App() {
             depenses={data.depenses}
             settings={data.settings}
             categories={data.categories}
+            comptes={data.comptes}
+            transactions={data.transactions}
             onNavigate={setPage}
           />
         );
@@ -64,6 +67,18 @@ export default function App() {
             categories={data.categories}
           />
         );
+      case 'import':
+        return (
+          <Import
+            comptes={data.comptes}
+            transactions={data.transactions}
+            importTransactions={data.importTransactions}
+            updateTransaction={data.updateTransaction}
+            deleteTransaction={data.deleteTransaction}
+            categories={data.categories}
+            onNavigate={setPage}
+          />
+        );
       case 'parametres':
         return (
           <Parametres
@@ -73,6 +88,10 @@ export default function App() {
             addCategory={data.addCategory}
             updateCategory={data.updateCategory}
             deleteCategory={data.deleteCategory}
+            comptes={data.comptes}
+            addCompte={data.addCompte}
+            updateCompte={data.updateCompte}
+            deleteCompte={data.deleteCompte}
           />
         );
       default:
@@ -83,7 +102,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex bg-gray-50">
       <Navigation currentPage={page} onNavigate={setPage} />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
         {renderPage()}
       </main>
     </div>
