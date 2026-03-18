@@ -41,6 +41,7 @@ export function useAppData() {
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [comptes, setComptes] = useState(DEFAULT_COMPTES);
   const [transactions, setTransactions] = useState([]);
+  const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -69,6 +70,16 @@ export function useAppData() {
             DEFAULT_COMPTES.forEach(c => { batch[`comptes/${c.id}`] = c; });
             await update(ref(db), batch);
           }
+
+          // Seed a_classer category for existing installs if missing
+          const aClasserSnap = await get(ref(db, 'categories/a_classer'));
+          if (!aClasserSnap.exists()) {
+            await set(ref(db, 'categories/a_classer'), {
+              id: 'a_classer',
+              name: 'À classer',
+              color: '#94a3b8',
+            });
+          }
         }
 
         const unsubRevenus = onValue(ref(db, 'revenus'), (s) => {
@@ -94,6 +105,10 @@ export function useAppData() {
 
         const unsubTransactions = onValue(ref(db, 'transactions'), (s) => {
           setTransactions(toArray(s.val()));
+        });
+
+        const unsubRules = onValue(ref(db, 'rules'), (s) => {
+          setRules(toArray(s.val()));
           setLoading(false);
         });
 
@@ -104,6 +119,7 @@ export function useAppData() {
           unsubCategories();
           unsubComptes();
           unsubTransactions();
+          unsubRules();
         };
       } catch (err) {
         console.error('Firebase init error:', err);
@@ -209,6 +225,16 @@ export function useAppData() {
     return count;
   }, []);
 
+  // ── Rules (custom categorization) ────────────────────────────
+  const addRule = useCallback((data) => {
+    const id = uid();
+    set(ref(db, `rules/${id}`), { ...data, id });
+  }, []);
+
+  const deleteRule = useCallback((id) => {
+    remove(ref(db, `rules/${id}`));
+  }, []);
+
   return {
     loading,
     revenus, addRevenu, updateRevenu, deleteRevenu,
@@ -217,5 +243,6 @@ export function useAppData() {
     categories, addCategory, updateCategory, deleteCategory,
     comptes, addCompte, updateCompte, deleteCompte,
     transactions, updateTransaction, deleteTransaction, importTransactions,
+    rules, addRule, deleteRule,
   };
 }

@@ -14,6 +14,7 @@ export const DEFAULT_CATEGORIES = [
   { id: 'achats_exceptionnels', name: 'Achats exceptionnels', color: '#a855f7' },
   { id: 'depenses_pro', name: 'Dépenses pro', color: '#0ea5e9' },
   { id: 'charges_sociales', name: 'Charges sociales / fiscales', color: '#dc2626' },
+  { id: 'a_classer', name: 'À classer', color: '#94a3b8' },
 ];
 
 export const DEFAULT_SETTINGS = {

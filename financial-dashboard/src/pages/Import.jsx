@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import {
-  Upload, CheckCircle2, AlertTriangle, X, FileText,
-  Trash2, Pencil, ChevronDown, Filter, ArrowLeft,
+  Upload, CheckCircle2, AlertTriangle, FileText,
+  Trash2, Pencil, Filter, ArrowLeft, Zap, HelpCircle,
 } from 'lucide-react';
 import { parseCSV } from '../utils/csvParser';
+import { guessCategory } from '../utils/categorizationRules';
 import { fmt } from '../utils/calculations';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 
@@ -19,8 +20,32 @@ function formatDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
-// ─── Step 1 : Select compte + upload file ────────────────────────────────────
-function StepUpload({ comptes, onParsed, existingHashes }) {
+/**
+ * Visual badge shown in the Catégorie column.
+ * - "Auto" (blue): category was detected automatically — may need review
+ * - "À classer" (amber): no rule matched — needs attention
+ * - nothing: user has manually confirmed/changed the category
+ */
+function CategorieBadge({ autoDetected, categorie }) {
+  if (autoDetected && categorie && categorie !== 'a_classer') {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">
+        <Zap size={8} />Auto
+      </span>
+    );
+  }
+  if (categorie === 'a_classer') {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">
+        <HelpCircle size={8} />À classer
+      </span>
+    );
+  }
+  return null;
+}
+
+// ─── Step 1: Select compte + upload file ─────────────────────────────────────
+function StepUpload({ comptes, onParsed, existingHashes, rules }) {
   const [selectedCompteId, setSelectedCompteId] = useState(comptes[0]?.id || '');
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState('');
@@ -46,15 +71,18 @@ function StepUpload({ comptes, onParsed, existingHashes }) {
         setError(parseError);
         return;
       }
-      // Mark duplicates
-      const withMeta = rows.map(r => ({
-        ...r,
-        compteId: selectedCompteId,
-        categorie: '',
-        nature: 'perso',
-        note: '',
-        duplicate: existingHashes.has(r.hash),
-      }));
+      const withMeta = rows.map(r => {
+        const catId = guessCategory(r.libelle, rules);
+        return {
+          ...r,
+          compteId: selectedCompteId,
+          categorie: catId,
+          autoDetected: catId !== 'a_classer',
+          nature: 'perso',
+          note: '',
+          duplicate: existingHashes.has(r.hash),
+        };
+      });
       onParsed(withMeta, file.name);
     };
     reader.onerror = () => {
@@ -62,7 +90,7 @@ function StepUpload({ comptes, onParsed, existingHashes }) {
       setError('Erreur de lecture du fichier.');
     };
     reader.readAsText(file, 'UTF-8');
-  }, [selectedCompteId, existingHashes, onParsed]);
+  }, [selectedCompteId, existingHashes, rules, onParsed]);
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
@@ -104,7 +132,7 @@ function StepUpload({ comptes, onParsed, existingHashes }) {
         )}
       </div>
 
-      {/* File drop */}
+      {/* File drop zone */}
       <div className="card">
         <h3 className="font-semibold text-gray-900 mb-3 text-sm">2. Charger le relevé CSV</h3>
         <div
@@ -113,9 +141,7 @@ function StepUpload({ comptes, onParsed, existingHashes }) {
           onDrop={onDrop}
           onClick={() => fileRef.current?.click()}
           className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
-            dragOver
-              ? 'border-blue-400 bg-blue-50'
-              : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
+            dragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
           }`}
         >
           <input
@@ -138,6 +164,12 @@ function StepUpload({ comptes, onParsed, existingHashes }) {
               <p className="text-xs text-gray-400 mt-3">
                 Formats supportés : BNP, Boursorama, Société Générale, Crédit Agricole, CIC, LCL…
               </p>
+              {rules.length > 0 && (
+                <p className="text-xs text-blue-500 mt-2">
+                  <Zap size={10} className="inline mr-0.5" />
+                  {rules.length} règle{rules.length > 1 ? 's' : ''} personnalisée{rules.length > 1 ? 's' : ''} active{rules.length > 1 ? 's' : ''}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -150,15 +182,15 @@ function StepUpload({ comptes, onParsed, existingHashes }) {
         )}
 
         <p className="text-xs text-gray-400 mt-3">
-          <strong>Astuce :</strong> exportez depuis l'espace client de votre banque au format CSV. Le fichier n'est jamais envoyé sur internet — il est lu localement dans votre navigateur.
+          <strong>Astuce :</strong> le fichier est lu localement dans votre navigateur — aucune donnée n'est envoyée sur internet.
         </p>
       </div>
     </div>
   );
 }
 
-// ─── Step 2 : Preview & categorize ───────────────────────────────────────────
-function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, onBack, importing }) {
+// ─── Step 2: Preview & categorize ────────────────────────────────────────────
+function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, importing }) {
   const [selected, setSelected] = useState(() => {
     const s = new Set();
     rows.forEach((r, i) => { if (!r.duplicate) s.add(i); });
@@ -166,15 +198,22 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
   });
   const [filterDuplicates, setFilterDuplicates] = useState(false);
 
-  const visibleRows = filterDuplicates ? rows.filter(r => !r.duplicate) : rows;
   const visibleIndices = useMemo(() => {
     return filterDuplicates
       ? rows.map((r, i) => (!r.duplicate ? i : null)).filter(i => i !== null)
       : rows.map((_, i) => i);
   }, [rows, filterDuplicates]);
 
+  const visibleRows = visibleIndices.map(i => rows[i]);
   const duplicateCount = rows.filter(r => r.duplicate).length;
+
+  // Auto-categorization stats (among non-duplicate rows)
+  const nonDupRows = rows.filter(r => !r.duplicate);
+  const autoCount = nonDupRows.filter(r => r.autoDetected && r.categorie !== 'a_classer').length;
+  const aClasserCount = nonDupRows.filter(r => r.categorie === 'a_classer').length;
+
   const selectedCount = selected.size;
+  const allVisibleSelected = visibleIndices.length > 0 && visibleIndices.every(i => selected.has(i));
 
   const toggleRow = (i) => {
     setSelected(prev => {
@@ -198,33 +237,26 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
     });
   };
 
-  const updateRow = (i, field, value) => {
-    setRows(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
-  };
-
   const handleImport = () => {
-    const toImport = rows.filter((_, i) => selected.has(i));
-    onImport(toImport);
+    onImport(rows.filter((_, i) => selected.has(i)));
   };
-
-  const allVisibleSelected = visibleIndices.length > 0 && visibleIndices.every(i => selected.has(i));
 
   return (
     <div>
       {/* Summary bar */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
           <FileText size={14} className="text-blue-500" />
           <span className="text-sm font-medium text-blue-700">{fileName}</span>
         </div>
-        <div className="text-sm text-gray-600">
-          <span className="font-semibold">{rows.length}</span> lignes détectées
-        </div>
+        <span className="text-sm text-gray-600">
+          <strong>{rows.length}</strong> lignes
+        </span>
         {duplicateCount > 0 && (
-          <div className="flex items-center gap-1.5 text-sm text-amber-600">
+          <span className="text-sm text-amber-600 flex items-center gap-1">
             <AlertTriangle size={13} />
-            <span><strong>{duplicateCount}</strong> doublon{duplicateCount > 1 ? 's' : ''} détecté{duplicateCount > 1 ? 's' : ''}</span>
-          </div>
+            <strong>{duplicateCount}</strong> doublon{duplicateCount > 1 ? 's' : ''}
+          </span>
         )}
         <div className="ml-auto flex items-center gap-2">
           {duplicateCount > 0 && (
@@ -241,6 +273,30 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
           </button>
         </div>
       </div>
+
+      {/* Auto-categorization stats */}
+      {nonDupRows.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {autoCount > 0 && (
+            <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs text-blue-700">
+              <Zap size={13} className="text-blue-500" />
+              <span><strong>{autoCount}</strong> catégorisée{autoCount > 1 ? 's' : ''} automatiquement</span>
+            </div>
+          )}
+          {aClasserCount > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700">
+              <HelpCircle size={13} className="text-amber-500" />
+              <span><strong>{aClasserCount}</strong> à classer manuellement</span>
+            </div>
+          )}
+          {autoCount === nonDupRows.length && (
+            <div className="flex items-center gap-1.5 bg-green-50 border border-green-100 rounded-xl px-3 py-2 text-xs text-green-700">
+              <CheckCircle2 size={13} />
+              <span>Toutes les transactions ont été catégorisées !</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       <div className="card p-0 overflow-hidden mb-4">
@@ -259,28 +315,27 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
                 <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Date</th>
                 <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500">Libellé</th>
                 <th className="py-3 px-2 text-right text-xs font-semibold text-gray-500 whitespace-nowrap">Montant</th>
-                <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500">Catégorie</th>
+                <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500 min-w-[160px]">Catégorie</th>
                 <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500">Nature</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {visibleRows.map((row, visIdx) => {
                 const realIdx = visibleIndices[visIdx];
+                const isSelected = selected.has(realIdx);
                 return (
                   <tr
                     key={realIdx}
                     className={`transition-colors ${
                       row.duplicate
                         ? 'bg-amber-50 opacity-70'
-                        : selected.has(realIdx)
-                          ? 'bg-white'
-                          : 'bg-gray-50 opacity-60'
+                        : isSelected ? 'bg-white' : 'bg-gray-50 opacity-60'
                     }`}
                   >
                     <td className="py-2.5 px-3">
                       <input
                         type="checkbox"
-                        checked={selected.has(realIdx)}
+                        checked={isSelected}
                         onChange={() => toggleRow(realIdx)}
                         className="w-4 h-4 accent-blue-600"
                       />
@@ -291,7 +346,7 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
                         <span className="ml-1 text-[9px] bg-amber-200 text-amber-700 px-1 py-0.5 rounded font-semibold">DUP</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-2 max-w-[180px]">
+                    <td className="py-2.5 px-2 max-w-[200px]">
                       <p className="text-gray-800 text-xs truncate" title={row.libelle}>{row.libelle}</p>
                     </td>
                     <td className={`py-2.5 px-2 text-right font-semibold text-xs whitespace-nowrap ${
@@ -299,25 +354,44 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
                     }`}>
                       {row.montant >= 0 ? '+' : ''}{fmt(row.montant)}
                     </td>
+
+                    {/* Category cell — core of this feature */}
                     <td className="py-2.5 px-2">
-                      <select
-                        className="input py-1 text-xs"
-                        value={row.categorie}
-                        onChange={e => updateRow(realIdx, 'categorie', e.target.value)}
-                        disabled={!selected.has(realIdx)}
-                      >
-                        <option value="">— Catégorie</option>
-                        {categories.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
+                      <div className="space-y-1">
+                        <select
+                          className={`input py-1 text-xs transition-colors ${
+                            row.autoDetected && row.categorie !== 'a_classer'
+                              ? 'border-blue-300 bg-blue-50/50'
+                              : row.categorie === 'a_classer'
+                                ? 'border-amber-300 bg-amber-50/50'
+                                : 'border-green-300 bg-green-50/50'
+                          }`}
+                          value={row.categorie || ''}
+                          onChange={e => {
+                            const newCat = e.target.value;
+                            setRows(prev => prev.map((r, idx) =>
+                              idx === realIdx ? { ...r, categorie: newCat, autoDetected: false } : r
+                            ));
+                          }}
+                          disabled={!isSelected}
+                        >
+                          <option value="">— Catégorie</option>
+                          {categories.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                        <CategorieBadge autoDetected={row.autoDetected} categorie={row.categorie} />
+                      </div>
                     </td>
+
                     <td className="py-2.5 px-2">
                       <select
                         className="input py-1 text-xs"
                         value={row.nature}
-                        onChange={e => updateRow(realIdx, 'nature', e.target.value)}
-                        disabled={!selected.has(realIdx)}
+                        onChange={e => setRows(prev => prev.map((r, idx) =>
+                          idx === realIdx ? { ...r, nature: e.target.value } : r
+                        ))}
+                        disabled={!isSelected}
                       >
                         {NATURES.map(n => (
                           <option key={n.value} value={n.value}>{n.label}</option>
@@ -334,26 +408,42 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
 
       {/* Import button */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">
-          <span className="font-semibold text-gray-800">{selectedCount}</span> transaction{selectedCount > 1 ? 's' : ''} sélectionnée{selectedCount > 1 ? 's' : ''}
-        </p>
-        <button
-          className="btn-primary"
-          disabled={selectedCount === 0 || importing}
-          onClick={handleImport}
-        >
-          {importing ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Import en cours…
-            </>
-          ) : (
-            <>
-              <CheckCircle2 size={16} />
-              Importer {selectedCount > 0 ? selectedCount : ''} transaction{selectedCount > 1 ? 's' : ''}
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-3 text-xs text-gray-400">
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
+            Auto
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+            À classer
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
+            Vérifié
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-gray-500">
+            <span className="font-semibold text-gray-800">{selectedCount}</span> sélectionnée{selectedCount > 1 ? 's' : ''}
+          </p>
+          <button
+            className="btn-primary"
+            disabled={selectedCount === 0 || importing}
+            onClick={handleImport}
+          >
+            {importing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Import en cours…
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={16} />
+                Importer {selectedCount > 0 ? selectedCount : ''} transaction{selectedCount > 1 ? 's' : ''}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -363,31 +453,50 @@ function StepPreview({ rows, setRows, fileName, categories, comptes, onImport, o
 function TransactionsList({ transactions, comptes, categories, updateTransaction, deleteTransaction }) {
   const [filterCompte, setFilterCompte] = useState('');
   const [filterMonth, setFilterMonth] = useState('');
+  const [filterCategorie, setFilterCategorie] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
 
-  // Build month options from transactions
   const months = useMemo(() => {
-    const set = new Set(transactions.map(t => t.date.slice(0, 7)));
+    const set = new Set(transactions.map(t => t.date?.slice(0, 7)).filter(Boolean));
     return [...set].sort().reverse();
   }, [transactions]);
 
   const filtered = useMemo(() => {
     return [...transactions]
       .filter(t => !filterCompte || t.compteId === filterCompte)
-      .filter(t => !filterMonth || t.date.startsWith(filterMonth))
-      .sort((a, b) => b.date.localeCompare(a.date));
-  }, [transactions, filterCompte, filterMonth]);
+      .filter(t => !filterMonth || t.date?.startsWith(filterMonth))
+      .filter(t => !filterCategorie || t.categorie === filterCategorie)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [transactions, filterCompte, filterMonth, filterCategorie]);
 
   const totalDebit = filtered.filter(t => t.montant < 0).reduce((s, t) => s + t.montant, 0);
   const totalCredit = filtered.filter(t => t.montant >= 0).reduce((s, t) => s + t.montant, 0);
 
+  const aClasserCount = transactions.filter(t => t.categorie === 'a_classer' || !t.categorie).length;
+
   return (
     <div>
+      {/* Alert for uncategorized */}
+      {aClasserCount > 0 && (
+        <div className="mb-4 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-amber-700 text-sm">
+          <HelpCircle size={15} className="shrink-0" />
+          <span>
+            <strong>{aClasserCount}</strong> transaction{aClasserCount > 1 ? 's' : ''} en attente de catégorisation.
+          </span>
+          <button
+            className="ml-auto text-xs underline"
+            onClick={() => setFilterCategorie('a_classer')}
+          >
+            Filtrer
+          </button>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
         <select
-          className="input text-sm py-1.5 flex-1 min-w-[140px]"
+          className="input text-sm py-1.5 flex-1 min-w-[130px]"
           value={filterCompte}
           onChange={e => setFilterCompte(e.target.value)}
         >
@@ -395,7 +504,7 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
           {comptes.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
         </select>
         <select
-          className="input text-sm py-1.5 flex-1 min-w-[140px]"
+          className="input text-sm py-1.5 flex-1 min-w-[130px]"
           value={filterMonth}
           onChange={e => setFilterMonth(e.target.value)}
         >
@@ -406,6 +515,22 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
             return <option key={m} value={m}>{label}</option>;
           })}
         </select>
+        <select
+          className="input text-sm py-1.5 flex-1 min-w-[130px]"
+          value={filterCategorie}
+          onChange={e => setFilterCategorie(e.target.value)}
+        >
+          <option value="">Toutes catégories</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {(filterCompte || filterMonth || filterCategorie) && (
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => { setFilterCompte(''); setFilterMonth(''); setFilterCategorie(''); }}
+          >
+            Effacer filtres
+          </button>
+        )}
       </div>
 
       {/* Summary */}
@@ -431,7 +556,7 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
       {/* List */}
       {filtered.length === 0 ? (
         <div className="card text-center py-10">
-          <p className="text-gray-400 text-sm">Aucune transaction{filterCompte || filterMonth ? ' pour ce filtre' : ''}.</p>
+          <p className="text-gray-400 text-sm">Aucune transaction{filterCompte || filterMonth || filterCategorie ? ' pour ce filtre' : ''}.</p>
         </div>
       ) : (
         <div className="card p-0 overflow-hidden">
@@ -442,14 +567,19 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
               return (
                 <div key={tx.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium text-gray-800 truncate">{tx.libelle}</p>
-                      {cat && (
+                      {cat && cat.id !== 'a_classer' && (
                         <span
                           className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                          style={{ background: cat.color + '20', color: cat.color }}
+                          style={{ background: cat.color + '25', color: cat.color }}
                         >
                           {cat.name}
+                        </span>
+                      )}
+                      {(!tx.categorie || tx.categorie === 'a_classer') && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600 shrink-0">
+                          À classer
                         </span>
                       )}
                       {tx.nature === 'pro' && (
@@ -487,7 +617,7 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
         </div>
       )}
 
-      {/* Edit inline panel */}
+      {/* Edit panel */}
       {editTarget && (
         <div className="fixed inset-0 bg-black/30 z-50 flex items-end md:items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
@@ -549,10 +679,11 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function Import({
-  comptes, transactions, importTransactions, updateTransaction, deleteTransaction, categories, onNavigate,
+  comptes, transactions, importTransactions, updateTransaction, deleteTransaction,
+  categories, rules, onNavigate,
 }) {
-  const [tab, setTab] = useState('import'); // 'import' | 'transactions'
-  const [step, setStep] = useState(1); // 1=upload, 2=preview, 3=done
+  const [tab, setTab] = useState('import');
+  const [step, setStep] = useState(1);
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
@@ -586,7 +717,6 @@ export default function Import({
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto pb-24 md:pb-6">
-      {/* Header */}
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-900">Import bancaire</h2>
         <p className="text-sm text-gray-500 mt-0.5">Importez vos relevés CSV et gérez vos transactions</p>
@@ -615,13 +745,9 @@ export default function Import({
       {/* ── Tab: Import ── */}
       {tab === 'import' && (
         <>
-          {/* Step indicator */}
           {step < 3 && (
             <div className="flex items-center gap-2 mb-6 text-sm">
-              {[
-                { n: 1, label: 'Fichier' },
-                { n: 2, label: 'Prévisualisation' },
-              ].map(({ n, label }) => (
+              {[{ n: 1, label: 'Fichier' }, { n: 2, label: 'Prévisualisation' }].map(({ n, label }) => (
                 <div key={n} className="flex items-center gap-2">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
                     step >= n ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-400'
@@ -635,30 +761,27 @@ export default function Import({
             </div>
           )}
 
-          {/* Step 1 */}
           {step === 1 && (
             <StepUpload
               comptes={comptes}
               onParsed={handleParsed}
               existingHashes={existingHashes}
+              rules={rules}
             />
           )}
 
-          {/* Step 2 */}
           {step === 2 && (
             <StepPreview
               rows={rows}
               setRows={setRows}
               fileName={fileName}
               categories={categories}
-              comptes={comptes}
               onImport={handleImport}
               onBack={() => setStep(1)}
               importing={importing}
             />
           )}
 
-          {/* Step 3 — Done */}
           {step === 3 && result && (
             <div className="max-w-md mx-auto text-center">
               <div className="card py-10 px-6">
@@ -676,9 +799,7 @@ export default function Import({
                   </p>
                 )}
                 <div className="flex gap-2 mt-6">
-                  <button className="btn-secondary flex-1" onClick={reset}>
-                    Nouvel import
-                  </button>
+                  <button className="btn-secondary flex-1" onClick={reset}>Nouvel import</button>
                   <button className="btn-primary flex-1" onClick={() => { setTab('transactions'); reset(); }}>
                     Voir les transactions
                   </button>

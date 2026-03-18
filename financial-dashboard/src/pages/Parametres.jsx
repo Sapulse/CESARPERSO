@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Save, RotateCcw } from 'lucide-react';
+import { Plus, Pencil, Trash2, Save, RotateCcw, Zap, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '../components/shared/Modal';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 import { fmt } from '../utils/calculations';
 import { DEFAULT_CATEGORIES, TYPES_COMPTE } from '../utils/defaults';
+import { DEFAULT_RULES } from '../utils/categorizationRules';
 
 const HEX_COLORS = [
   '#6366f1','#3b82f6','#06b6d4','#10b981','#22c55e',
@@ -110,8 +111,13 @@ export default function Parametres({
   settings, updateSettings,
   categories, addCategory, updateCategory, deleteCategory,
   comptes, addCompte, updateCompte, deleteCompte,
+  rules, addRule, deleteRule,
 }) {
   const [catModal, setCatModal] = useState(null);
+  const [newKeyword, setNewKeyword] = useState('');
+  const [newRuleCat, setNewRuleCat] = useState('');
+  const [showDefaultRules, setShowDefaultRules] = useState(false);
+  const [deleteRuleTarget, setDeleteRuleTarget] = useState(null);
   const [compteModal, setCompteModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteCompteTarget, setDeleteCompteTarget] = useState(null);
@@ -346,6 +352,126 @@ export default function Parametres({
         </div>
       </div>
 
+      {/* ── Règles de catégorisation ─────────────────────────────── */}
+      <div className="card mb-4">
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Zap size={15} className="text-blue-500" />
+              Règles de catégorisation
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Vos règles personnalisées sont prioritaires sur les règles intégrées.
+            </p>
+          </div>
+        </div>
+
+        {/* Add custom rule */}
+        <div className="flex gap-2 mt-4 mb-3">
+          <input
+            className="input flex-1 text-sm"
+            placeholder="Mot-clé (ex: leclerc)"
+            value={newKeyword}
+            onChange={e => setNewKeyword(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && newKeyword.trim() && newRuleCat) {
+                addRule({ keyword: newKeyword.trim().toLowerCase(), categoryId: newRuleCat });
+                setNewKeyword('');
+                setNewRuleCat('');
+              }
+            }}
+          />
+          <select
+            className="input text-sm flex-1"
+            value={newRuleCat}
+            onChange={e => setNewRuleCat(e.target.value)}
+          >
+            <option value="">— Catégorie</option>
+            {categories.filter(c => c.id !== 'a_classer').map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button
+            className="btn-primary text-xs shrink-0"
+            disabled={!newKeyword.trim() || !newRuleCat}
+            onClick={() => {
+              addRule({ keyword: newKeyword.trim().toLowerCase(), categoryId: newRuleCat });
+              setNewKeyword('');
+              setNewRuleCat('');
+            }}
+          >
+            <Plus size={14} /> Ajouter
+          </button>
+        </div>
+
+        {/* Custom rules list */}
+        {(rules || []).length === 0 ? (
+          <p className="text-xs text-gray-400 text-center py-3 bg-gray-50 rounded-xl">
+            Aucune règle personnalisée. Ajoutez des mots-clés spécifiques à votre usage.
+          </p>
+        ) : (
+          <div className="space-y-1.5 mb-3">
+            {(rules || []).map(rule => {
+              const cat = categories.find(c => c.id === rule.categoryId);
+              return (
+                <div key={rule.id} className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                  <Zap size={12} className="text-blue-400 shrink-0" />
+                  <span className="text-sm font-mono text-blue-800 flex-1 truncate">{rule.keyword}</span>
+                  <span className="text-xs text-gray-500">→</span>
+                  {cat && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-full shrink-0"
+                      style={{ background: cat.color + '20', color: cat.color }}
+                    >
+                      {cat.name}
+                    </span>
+                  )}
+                  <button
+                    className="btn-ghost p-1 text-gray-400 hover:text-red-500 shrink-0"
+                    onClick={() => setDeleteRuleTarget(rule)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Default rules (collapsible) */}
+        <button
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 mt-2"
+          onClick={() => setShowDefaultRules(v => !v)}
+        >
+          {showDefaultRules ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          Règles intégrées ({DEFAULT_RULES.reduce((s, r) => s + r.keywords.length, 0)} mots-clés, non modifiables)
+        </button>
+        {showDefaultRules && (
+          <div className="mt-2 space-y-1 max-h-64 overflow-y-auto pr-1">
+            {DEFAULT_RULES.map(rule => {
+              const cat = categories.find(c => c.id === rule.categoryId);
+              return (
+                <div key={rule.categoryId} className="bg-gray-50 rounded-xl px-3 py-2">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    {cat && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
+                        style={{ background: cat.color + '20', color: cat.color }}
+                      >
+                        {cat.name}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500 font-mono leading-relaxed">
+                    {rule.keywords.join(', ')}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* ── Modals ───────────────────────────────────────────────── */}
       <Modal
         open={!!catModal}
@@ -401,6 +527,14 @@ export default function Parametres({
         onConfirm={() => { deleteCompte(deleteCompteTarget.id); setDeleteCompteTarget(null); }}
         title="Supprimer le compte"
         message={`Supprimer le compte "${deleteCompteTarget?.nom}" ? Les transactions rattachées resteront en base.`}
+      />
+
+      <ConfirmDialog
+        open={!!deleteRuleTarget}
+        onClose={() => setDeleteRuleTarget(null)}
+        onConfirm={() => { deleteRule(deleteRuleTarget.id); setDeleteRuleTarget(null); }}
+        title="Supprimer la règle"
+        message={`Supprimer la règle "${deleteRuleTarget?.keyword}" ?`}
       />
     </div>
   );

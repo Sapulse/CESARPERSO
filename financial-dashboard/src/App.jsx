@@ -76,6 +76,7 @@ export default function App() {
             updateTransaction={data.updateTransaction}
             deleteTransaction={data.deleteTransaction}
             categories={data.categories}
+            rules={data.rules}
             onNavigate={setPage}
           />
         );
@@ -92,6 +93,9 @@ export default function App() {
             addCompte={data.addCompte}
             updateCompte={data.updateCompte}
             deleteCompte={data.deleteCompte}
+            rules={data.rules}
+            addRule={data.addRule}
+            deleteRule={data.deleteRule}
           />
         );
       default:
