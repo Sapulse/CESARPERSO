@@ -2,16 +2,25 @@ import { useState, useRef, useCallback, useMemo } from 'react';
 import {
   Upload, CheckCircle2, AlertTriangle, FileText,
   Trash2, Pencil, Filter, ArrowLeft, Zap, HelpCircle,
+  ArrowLeftRight, Eye, EyeOff,
 } from 'lucide-react';
 import { parseCSV } from '../utils/csvParser';
 import { guessCategory } from '../utils/categorizationRules';
-import { fmt } from '../utils/calculations';
+import { fmt, detectTransferCandidates } from '../utils/calculations';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 const NATURES = [
   { value: 'perso', label: 'Perso' },
   { value: 'pro', label: 'Pro' },
+];
+
+export const STATUTS = [
+  { value: 'validee',           label: 'Validée',           color: 'bg-green-100 text-green-700' },
+  { value: 'a_classer',        label: 'À classer',          color: 'bg-amber-100 text-amber-700' },
+  { value: 'ignoree',          label: 'Ignorée',            color: 'bg-gray-100 text-gray-500' },
+  { value: 'doublon_suspect',  label: 'Doublon suspect',    color: 'bg-orange-100 text-orange-700' },
+  { value: 'transfert_interne', label: 'Virement interne', color: 'bg-purple-100 text-purple-700' },
 ];
 
 function formatDate(iso) {
@@ -20,12 +29,16 @@ function formatDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
-/**
- * Visual badge shown in the Catégorie column.
- * - "Auto" (blue): category was detected automatically — may need review
- * - "À classer" (amber): no rule matched — needs attention
- * - nothing: user has manually confirmed/changed the category
- */
+function StatutBadge({ status }) {
+  const s = STATUTS.find(x => x.value === status);
+  if (!s) return null;
+  return (
+    <span className={`inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${s.color}`}>
+      {s.label}
+    </span>
+  );
+}
+
 function CategorieBadge({ autoDetected, categorie }) {
   if (autoDetected && categorie && categorie !== 'a_classer') {
     return (
@@ -67,10 +80,7 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
     reader.onload = (e) => {
       const { rows, error: parseError } = parseCSV(e.target.result);
       setLoading(false);
-      if (parseError) {
-        setError(parseError);
-        return;
-      }
+      if (parseError) { setError(parseError); return; }
       const withMeta = rows.map(r => {
         const catId = guessCategory(r.libelle, rules);
         return {
@@ -85,10 +95,7 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
       });
       onParsed(withMeta, file.name);
     };
-    reader.onerror = () => {
-      setLoading(false);
-      setError('Erreur de lecture du fichier.');
-    };
+    reader.onerror = () => { setLoading(false); setError('Erreur de lecture du fichier.'); };
     reader.readAsText(file, 'UTF-8');
   }, [selectedCompteId, existingHashes, rules, onParsed]);
 
@@ -100,13 +107,11 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
 
   return (
     <div className="max-w-xl mx-auto">
-      {/* Compte selection */}
       <div className="card mb-4">
         <h3 className="font-semibold text-gray-900 mb-3 text-sm">1. Sélectionner le compte</h3>
         {comptes.length === 0 ? (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-700 text-sm">
-            Aucun compte configuré. Rendez-vous dans{' '}
-            <strong>Paramètres → Comptes bancaires</strong> pour en créer un.
+            Aucun compte configuré. Rendez-vous dans <strong>Paramètres → Comptes bancaires</strong>.
           </div>
         ) : (
           <div className="space-y-2">
@@ -115,9 +120,7 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
                 key={c.id}
                 onClick={() => setSelectedCompteId(c.id)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all text-left ${
-                  selectedCompteId === c.id
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-100 bg-gray-50 hover:border-gray-300'
+                  selectedCompteId === c.id ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-gray-50 hover:border-gray-300'
                 }`}
               >
                 <span className="w-3 h-3 rounded-full shrink-0" style={{ background: c.couleur || '#3b82f6' }} />
@@ -132,7 +135,6 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
         )}
       </div>
 
-      {/* File drop zone */}
       <div className="card">
         <h3 className="font-semibold text-gray-900 mb-3 text-sm">2. Charger le relevé CSV</h3>
         <div
@@ -144,13 +146,7 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
             dragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
           }`}
         >
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,.txt"
-            className="hidden"
-            onChange={e => processFile(e.target.files[0])}
-          />
+          <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden" onChange={e => processFile(e.target.files[0])} />
           {loading ? (
             <div className="flex flex-col items-center gap-2">
               <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -161,9 +157,7 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
               <Upload size={32} className="mx-auto mb-3 text-gray-300" />
               <p className="text-sm font-medium text-gray-700">Déposez votre fichier ici</p>
               <p className="text-xs text-gray-400 mt-1">ou cliquez pour parcourir — .csv, .txt</p>
-              <p className="text-xs text-gray-400 mt-3">
-                Formats supportés : BNP, Boursorama, Société Générale, Crédit Agricole, CIC, LCL…
-              </p>
+              <p className="text-xs text-gray-400 mt-3">Formats supportés : BNP, Boursorama, Société Générale, CA, CIC, LCL…</p>
               {rules.length > 0 && (
                 <p className="text-xs text-blue-500 mt-2">
                   <Zap size={10} className="inline mr-0.5" />
@@ -173,16 +167,14 @@ function StepUpload({ comptes, onParsed, existingHashes, rules }) {
             </>
           )}
         </div>
-
         {error && (
           <div className="mt-3 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3 text-red-700 text-sm">
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
         )}
-
         <p className="text-xs text-gray-400 mt-3">
-          <strong>Astuce :</strong> le fichier est lu localement dans votre navigateur — aucune donnée n'est envoyée sur internet.
+          <strong>Astuce :</strong> le fichier est lu localement — aucune donnée n'est envoyée sur internet.
         </p>
       </div>
     </div>
@@ -206,12 +198,9 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
 
   const visibleRows = visibleIndices.map(i => rows[i]);
   const duplicateCount = rows.filter(r => r.duplicate).length;
-
-  // Auto-categorization stats (among non-duplicate rows)
   const nonDupRows = rows.filter(r => !r.duplicate);
   const autoCount = nonDupRows.filter(r => r.autoDetected && r.categorie !== 'a_classer').length;
   const aClasserCount = nonDupRows.filter(r => r.categorie === 'a_classer').length;
-
   const selectedCount = selected.size;
   const allVisibleSelected = visibleIndices.length > 0 && visibleIndices.every(i => selected.has(i));
 
@@ -228,34 +217,23 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
     const allVisible = visibleIndices.every(i => selected.has(i));
     setSelected(prev => {
       const next = new Set(prev);
-      if (allVisible) {
-        visSet.forEach(i => next.delete(i));
-      } else {
-        visSet.forEach(i => next.add(i));
-      }
+      if (allVisible) { visSet.forEach(i => next.delete(i)); }
+      else { visSet.forEach(i => next.add(i)); }
       return next;
     });
   };
 
-  const handleImport = () => {
-    onImport(rows.filter((_, i) => selected.has(i)));
-  };
-
   return (
     <div>
-      {/* Summary bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
           <FileText size={14} className="text-blue-500" />
           <span className="text-sm font-medium text-blue-700">{fileName}</span>
         </div>
-        <span className="text-sm text-gray-600">
-          <strong>{rows.length}</strong> lignes
-        </span>
+        <span className="text-sm text-gray-600"><strong>{rows.length}</strong> lignes</span>
         {duplicateCount > 0 && (
           <span className="text-sm text-amber-600 flex items-center gap-1">
-            <AlertTriangle size={13} />
-            <strong>{duplicateCount}</strong> doublon{duplicateCount > 1 ? 's' : ''}
+            <AlertTriangle size={13} /><strong>{duplicateCount}</strong> doublon{duplicateCount > 1 ? 's' : ''}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -264,8 +242,7 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
               onClick={() => setFilterDuplicates(v => !v)}
               className={`btn-secondary text-xs flex items-center gap-1 ${filterDuplicates ? 'bg-blue-50 border-blue-300 text-blue-700' : ''}`}
             >
-              <Filter size={12} />
-              {filterDuplicates ? 'Voir tout' : 'Masquer doublons'}
+              <Filter size={12} />{filterDuplicates ? 'Voir tout' : 'Masquer doublons'}
             </button>
           )}
           <button onClick={onBack} className="btn-secondary text-xs flex items-center gap-1">
@@ -274,7 +251,6 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
         </div>
       </div>
 
-      {/* Auto-categorization stats */}
       {nonDupRows.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-4">
           {autoCount > 0 && (
@@ -289,28 +265,21 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
               <span><strong>{aClasserCount}</strong> à classer manuellement</span>
             </div>
           )}
-          {autoCount === nonDupRows.length && (
+          {aClasserCount === 0 && autoCount === nonDupRows.length && (
             <div className="flex items-center gap-1.5 bg-green-50 border border-green-100 rounded-xl px-3 py-2 text-xs text-green-700">
-              <CheckCircle2 size={13} />
-              <span>Toutes les transactions ont été catégorisées !</span>
+              <CheckCircle2 size={13} /><span>Toutes les transactions ont été catégorisées !</span>
             </div>
           )}
         </div>
       )}
 
-      {/* Table */}
       <div className="card p-0 overflow-hidden mb-4">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="py-3 px-3 text-left">
-                  <input
-                    type="checkbox"
-                    checked={allVisibleSelected}
-                    onChange={toggleAll}
-                    className="w-4 h-4 accent-blue-600"
-                  />
+                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} className="w-4 h-4 accent-blue-600" />
                 </th>
                 <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Date</th>
                 <th className="py-3 px-2 text-left text-xs font-semibold text-gray-500">Libellé</th>
@@ -327,18 +296,11 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
                   <tr
                     key={realIdx}
                     className={`transition-colors ${
-                      row.duplicate
-                        ? 'bg-amber-50 opacity-70'
-                        : isSelected ? 'bg-white' : 'bg-gray-50 opacity-60'
+                      row.duplicate ? 'bg-amber-50 opacity-70' : isSelected ? 'bg-white' : 'bg-gray-50 opacity-60'
                     }`}
                   >
                     <td className="py-2.5 px-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleRow(realIdx)}
-                        className="w-4 h-4 accent-blue-600"
-                      />
+                      <input type="checkbox" checked={isSelected} onChange={() => toggleRow(realIdx)} className="w-4 h-4 accent-blue-600" />
                     </td>
                     <td className="py-2.5 px-2 whitespace-nowrap text-gray-600 text-xs">
                       {formatDate(row.date)}
@@ -349,13 +311,9 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
                     <td className="py-2.5 px-2 max-w-[200px]">
                       <p className="text-gray-800 text-xs truncate" title={row.libelle}>{row.libelle}</p>
                     </td>
-                    <td className={`py-2.5 px-2 text-right font-semibold text-xs whitespace-nowrap ${
-                      row.montant >= 0 ? 'text-green-600' : 'text-gray-800'
-                    }`}>
+                    <td className={`py-2.5 px-2 text-right font-semibold text-xs whitespace-nowrap ${row.montant >= 0 ? 'text-green-600' : 'text-gray-800'}`}>
                       {row.montant >= 0 ? '+' : ''}{fmt(row.montant)}
                     </td>
-
-                    {/* Category cell — core of this feature */}
                     <td className="py-2.5 px-2">
                       <div className="space-y-1">
                         <select
@@ -376,14 +334,11 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
                           disabled={!isSelected}
                         >
                           <option value="">— Catégorie</option>
-                          {categories.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
+                          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                         <CategorieBadge autoDetected={row.autoDetected} categorie={row.categorie} />
                       </div>
                     </td>
-
                     <td className="py-2.5 px-2">
                       <select
                         className="input py-1 text-xs"
@@ -393,9 +348,7 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
                         ))}
                         disabled={!isSelected}
                       >
-                        {NATURES.map(n => (
-                          <option key={n.value} value={n.value}>{n.label}</option>
-                        ))}
+                        {NATURES.map(n => <option key={n.value} value={n.value}>{n.label}</option>)}
                       </select>
                     </td>
                   </tr>
@@ -406,42 +359,121 @@ function StepPreview({ rows, setRows, fileName, categories, onImport, onBack, im
         </div>
       </div>
 
-      {/* Import button */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-xs text-gray-400">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
-            Auto
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-            À classer
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
-            Vérifié
-          </span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />Auto</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />À classer</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" />Vérifié</span>
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm text-gray-500">
             <span className="font-semibold text-gray-800">{selectedCount}</span> sélectionnée{selectedCount > 1 ? 's' : ''}
           </p>
-          <button
-            className="btn-primary"
-            disabled={selectedCount === 0 || importing}
-            onClick={handleImport}
-          >
+          <button className="btn-primary" disabled={selectedCount === 0 || importing} onClick={() => onImport(rows.filter((_, i) => selected.has(i)))}>
             {importing ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Import en cours…
-              </>
+              <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Import en cours…</>
             ) : (
-              <>
-                <CheckCircle2 size={16} />
-                Importer {selectedCount > 0 ? selectedCount : ''} transaction{selectedCount > 1 ? 's' : ''}
-              </>
+              <><CheckCircle2 size={16} />Importer {selectedCount > 0 ? selectedCount : ''} transaction{selectedCount > 1 ? 's' : ''}</>
             )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Transaction edit modal ───────────────────────────────────────────────────
+function EditTransactionModal({ tx, categories, comptes, onSave, onClose }) {
+  const [form, setForm] = useState({
+    libelle: tx.libelle || '',
+    montant: tx.montant ?? '',
+    date: tx.date || '',
+    categorie: tx.categorie || '',
+    nature: tx.nature || 'perso',
+    status: tx.status || 'validee',
+    compteId: tx.compteId || '',
+    note: tx.note || '',
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3 max-h-[90vh] overflow-y-auto">
+        <h3 className="font-semibold text-gray-900">Modifier la transaction</h3>
+
+        <div>
+          <label className="label">Libellé</label>
+          <input className="input" value={form.libelle} onChange={e => set('libelle', e.target.value)} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Montant (€)</label>
+            <input className="input" type="number" step="0.01" value={form.montant} onChange={e => set('montant', e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Date</label>
+            <input className="input" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Catégorie</label>
+            <select className="input" value={form.categorie} onChange={e => set('categorie', e.target.value)}>
+              <option value="">— Aucune</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Nature</label>
+            <select className="input" value={form.nature} onChange={e => set('nature', e.target.value)}>
+              {NATURES.map(n => <option key={n.value} value={n.value}>{n.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Statut</label>
+            <select className="input" value={form.status} onChange={e => set('status', e.target.value)}>
+              {STATUTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Compte</label>
+            <select className="input" value={form.compteId} onChange={e => set('compteId', e.target.value)}>
+              <option value="">— Compte</option>
+              {comptes.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="label">Note</label>
+          <input className="input" placeholder="Note optionnelle" value={form.note} onChange={e => set('note', e.target.value)} />
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <button className="btn-secondary flex-1" onClick={onClose}>Annuler</button>
+          <button
+            className="btn-primary flex-1"
+            onClick={() => {
+              onSave(tx.id, {
+                libelle: form.libelle,
+                montant: parseFloat(form.montant) || tx.montant,
+                date: form.date,
+                categorie: form.categorie,
+                nature: form.nature,
+                status: form.status,
+                compteId: form.compteId,
+                note: form.note,
+                autoDetected: false,
+              });
+              onClose();
+            }}
+          >
+            Sauvegarder
           </button>
         </div>
       </div>
@@ -454,6 +486,7 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
   const [filterCompte, setFilterCompte] = useState('');
   const [filterMonth, setFilterMonth] = useState('');
   const [filterCategorie, setFilterCategorie] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
 
@@ -467,47 +500,31 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
       .filter(t => !filterCompte || t.compteId === filterCompte)
       .filter(t => !filterMonth || t.date?.startsWith(filterMonth))
       .filter(t => !filterCategorie || t.categorie === filterCategorie)
+      .filter(t => !filterStatus || t.status === filterStatus)
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [transactions, filterCompte, filterMonth, filterCategorie]);
+  }, [transactions, filterCompte, filterMonth, filterCategorie, filterStatus]);
 
   const totalDebit = filtered.filter(t => t.montant < 0).reduce((s, t) => s + t.montant, 0);
   const totalCredit = filtered.filter(t => t.montant >= 0).reduce((s, t) => s + t.montant, 0);
-
-  const aClasserCount = transactions.filter(t => t.categorie === 'a_classer' || !t.categorie).length;
+  const aClasserCount = transactions.filter(t => t.status === 'a_classer' || (!t.status && (!t.categorie || t.categorie === 'a_classer'))).length;
+  const hasActiveFilters = filterCompte || filterMonth || filterCategorie || filterStatus;
 
   return (
     <div>
-      {/* Alert for uncategorized */}
       {aClasserCount > 0 && (
         <div className="mb-4 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-amber-700 text-sm">
           <HelpCircle size={15} className="shrink-0" />
-          <span>
-            <strong>{aClasserCount}</strong> transaction{aClasserCount > 1 ? 's' : ''} en attente de catégorisation.
-          </span>
-          <button
-            className="ml-auto text-xs underline"
-            onClick={() => setFilterCategorie('a_classer')}
-          >
-            Filtrer
-          </button>
+          <span><strong>{aClasserCount}</strong> transaction{aClasserCount > 1 ? 's' : ''} à classer.</span>
+          <button className="ml-auto text-xs underline" onClick={() => setFilterStatus('a_classer')}>Filtrer</button>
         </div>
       )}
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
-        <select
-          className="input text-sm py-1.5 flex-1 min-w-[130px]"
-          value={filterCompte}
-          onChange={e => setFilterCompte(e.target.value)}
-        >
+        <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={filterCompte} onChange={e => setFilterCompte(e.target.value)}>
           <option value="">Tous les comptes</option>
           {comptes.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
         </select>
-        <select
-          className="input text-sm py-1.5 flex-1 min-w-[130px]"
-          value={filterMonth}
-          onChange={e => setFilterMonth(e.target.value)}
-        >
+        <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}>
           <option value="">Tous les mois</option>
           {months.map(m => {
             const [y, mo] = m.split('-');
@@ -515,25 +532,21 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
             return <option key={m} value={m}>{label}</option>;
           })}
         </select>
-        <select
-          className="input text-sm py-1.5 flex-1 min-w-[130px]"
-          value={filterCategorie}
-          onChange={e => setFilterCategorie(e.target.value)}
-        >
+        <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={filterCategorie} onChange={e => setFilterCategorie(e.target.value)}>
           <option value="">Toutes catégories</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        {(filterCompte || filterMonth || filterCategorie) && (
-          <button
-            className="btn-secondary text-xs"
-            onClick={() => { setFilterCompte(''); setFilterMonth(''); setFilterCategorie(''); }}
-          >
+        <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+          <option value="">Tous statuts</option>
+          {STATUTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        {hasActiveFilters && (
+          <button className="btn-secondary text-xs" onClick={() => { setFilterCompte(''); setFilterMonth(''); setFilterCategorie(''); setFilterStatus(''); }}>
             Effacer filtres
           </button>
         )}
       </div>
 
-      {/* Summary */}
       {filtered.length > 0 && (
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div className="card py-2.5 text-center">
@@ -553,10 +566,9 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
         </div>
       )}
 
-      {/* List */}
       {filtered.length === 0 ? (
         <div className="card text-center py-10">
-          <p className="text-gray-400 text-sm">Aucune transaction{filterCompte || filterMonth || filterCategorie ? ' pour ce filtre' : ''}.</p>
+          <p className="text-gray-400 text-sm">Aucune transaction{hasActiveFilters ? ' pour ce filtre' : ''}.</p>
         </div>
       ) : (
         <div className="card p-0 overflow-hidden">
@@ -564,49 +576,36 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
             {filtered.map(tx => {
               const compte = comptes.find(c => c.id === tx.compteId);
               const cat = categories.find(c => c.id === tx.categorie);
+              const isIgnored = tx.status === 'ignoree' || tx.status === 'transfert_interne';
               return (
-                <div key={tx.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group">
+                <div key={tx.id} className={`flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group ${isIgnored ? 'opacity-50' : ''}`}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium text-gray-800 truncate">{tx.libelle}</p>
                       {cat && cat.id !== 'a_classer' && (
-                        <span
-                          className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                          style={{ background: cat.color + '25', color: cat.color }}
-                        >
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" style={{ background: cat.color + '25', color: cat.color }}>
                           {cat.name}
-                        </span>
-                      )}
-                      {(!tx.categorie || tx.categorie === 'a_classer') && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600 shrink-0">
-                          À classer
                         </span>
                       )}
                       {tx.nature === 'pro' && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 shrink-0">Pro</span>
                       )}
+                      <StatutBadge status={tx.status} />
                     </div>
                     <p className="text-[11px] text-gray-400 mt-0.5">
                       {formatDate(tx.date)}
-                      {compte && (
-                        <span className="ml-2" style={{ color: compte.couleur || '#3b82f6' }}>● {compte.nom}</span>
-                      )}
+                      {compte && <span className="ml-2" style={{ color: compte.couleur || '#3b82f6' }}>● {compte.nom}</span>}
+                      {tx.source === 'import_csv' && <span className="ml-2 text-gray-300">CSV</span>}
                     </p>
                   </div>
                   <span className={`text-sm font-semibold shrink-0 ${tx.montant >= 0 ? 'text-green-600' : 'text-gray-800'}`}>
                     {tx.montant >= 0 ? '+' : ''}{fmt(tx.montant)}
                   </span>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      className="btn-ghost p-1.5 text-gray-400 hover:text-blue-600"
-                      onClick={() => setEditTarget({ ...tx })}
-                    >
+                    <button className="btn-ghost p-1.5 text-gray-400 hover:text-blue-600" onClick={() => setEditTarget({ ...tx })}>
                       <Pencil size={13} />
                     </button>
-                    <button
-                      className="btn-ghost p-1.5 text-gray-400 hover:text-red-500"
-                      onClick={() => setDeleteTarget(tx)}
-                    >
+                    <button className="btn-ghost p-1.5 text-gray-400 hover:text-red-500" onClick={() => setDeleteTarget(tx)}>
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -617,53 +616,14 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
         </div>
       )}
 
-      {/* Edit panel */}
       {editTarget && (
-        <div className="fixed inset-0 bg-black/30 z-50 flex items-end md:items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
-            <h3 className="font-semibold text-gray-900">Modifier la transaction</h3>
-            <div>
-              <label className="label">Libellé</label>
-              <input className="input" value={editTarget.libelle} onChange={e => setEditTarget(p => ({ ...p, libelle: e.target.value }))} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Catégorie</label>
-                <select className="input" value={editTarget.categorie || ''} onChange={e => setEditTarget(p => ({ ...p, categorie: e.target.value }))}>
-                  <option value="">— Aucune</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="label">Nature</label>
-                <select className="input" value={editTarget.nature || 'perso'} onChange={e => setEditTarget(p => ({ ...p, nature: e.target.value }))}>
-                  {NATURES.map(n => <option key={n.value} value={n.value}>{n.label}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="label">Note</label>
-              <input className="input" placeholder="Note optionnelle" value={editTarget.note || ''} onChange={e => setEditTarget(p => ({ ...p, note: e.target.value }))} />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button className="btn-secondary flex-1" onClick={() => setEditTarget(null)}>Annuler</button>
-              <button
-                className="btn-primary flex-1"
-                onClick={() => {
-                  updateTransaction(editTarget.id, {
-                    libelle: editTarget.libelle,
-                    categorie: editTarget.categorie,
-                    nature: editTarget.nature,
-                    note: editTarget.note,
-                  });
-                  setEditTarget(null);
-                }}
-              >
-                Sauvegarder
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditTransactionModal
+          tx={editTarget}
+          categories={categories}
+          comptes={comptes}
+          onSave={updateTransaction}
+          onClose={() => setEditTarget(null)}
+        />
       )}
 
       <ConfirmDialog
@@ -671,8 +631,82 @@ function TransactionsList({ transactions, comptes, categories, updateTransaction
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => { deleteTransaction(deleteTarget.id); setDeleteTarget(null); }}
         title="Supprimer la transaction"
-        message={`Supprimer "${deleteTarget?.libelle}" (${fmt(deleteTarget?.montant)}) ?`}
+        message={`Supprimer "${deleteTarget?.libelle}" (${deleteTarget ? fmt(deleteTarget.montant) : ''}) ?`}
       />
+    </div>
+  );
+}
+
+// ─── Internal transfers detection tab ────────────────────────────────────────
+function VirementsList({ transactions, comptes, updateTransaction }) {
+  const candidates = useMemo(() => detectTransferCandidates(transactions), [transactions]);
+  const [confirmed, setConfirmed] = useState(new Set());
+
+  const markAsTransfer = (debitId, creditId) => {
+    updateTransaction(debitId, { status: 'transfert_interne' });
+    updateTransaction(creditId, { status: 'transfert_interne' });
+    setConfirmed(prev => new Set([...prev, `${debitId}-${creditId}`]));
+  };
+
+  if (candidates.length === 0) {
+    return (
+      <div className="card text-center py-12 text-gray-400">
+        <ArrowLeftRight size={32} className="mx-auto mb-3 opacity-30" />
+        <p className="font-medium text-sm">Aucun virement interne détecté</p>
+        <p className="text-xs mt-1">Les virements entre vos comptes apparaîtront ici automatiquement.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-blue-700">
+        <strong>{candidates.length}</strong> virement{candidates.length > 1 ? 's' : ''} interne{candidates.length > 1 ? 's' : ''} détecté{candidates.length > 1 ? 's' : ''}.
+        Marquez-les pour les exclure du bilan.
+      </div>
+
+      {candidates.map(({ debit, credit, daysDiff }) => {
+        const key = `${debit.id}-${credit.id}`;
+        const isConfirmed = confirmed.has(key) || debit.status === 'transfert_interne' || credit.status === 'transfert_interne';
+        const fromCompte = comptes.find(c => c.id === debit.compteId);
+        const toCompte = comptes.find(c => c.id === credit.compteId);
+        return (
+          <div key={key} className={`card ${isConfirmed ? 'opacity-50' : ''}`}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                  <span style={{ color: fromCompte?.couleur || '#6b7280' }}>● {fromCompte?.nom || debit.compteId}</span>
+                  <ArrowLeftRight size={14} className="text-gray-400" />
+                  <span style={{ color: toCompte?.couleur || '#6b7280' }}>● {toCompte?.nom || credit.compteId}</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {formatDate(debit.date)} → {formatDate(credit.date)}
+                  {daysDiff > 0 && ` (${daysDiff}j d'écart)`}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-bold text-gray-800">{fmt(Math.abs(debit.montant))}</p>
+              </div>
+            </div>
+            <div className="text-xs text-gray-500 space-y-1 mb-3">
+              <p className="truncate"><span className="text-red-500">−</span> {debit.libelle}</p>
+              <p className="truncate"><span className="text-green-500">+</span> {credit.libelle}</p>
+            </div>
+            {isConfirmed ? (
+              <div className="flex items-center gap-1.5 text-xs text-green-600">
+                <CheckCircle2 size={13} /> Marqué comme virement interne
+              </div>
+            ) : (
+              <button
+                className="btn-secondary text-xs w-full flex items-center justify-center gap-1.5"
+                onClick={() => markAsTransfer(debit.id, credit.id)}
+              >
+                <ArrowLeftRight size={12} /> Confirmer comme virement interne
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -689,10 +723,8 @@ export default function Import({
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
 
-  const existingHashes = useMemo(
-    () => new Set(transactions.map(t => t.hash)),
-    [transactions]
-  );
+  const existingHashes = useMemo(() => new Set(transactions.map(t => t.hash)), [transactions]);
+  const transferCandidates = useMemo(() => detectTransferCandidates(transactions), [transactions]);
 
   const handleParsed = useCallback((parsedRows, name) => {
     setRows(parsedRows);
@@ -708,38 +740,37 @@ export default function Import({
     setStep(3);
   }, [importTransactions]);
 
-  const reset = () => {
-    setStep(1);
-    setRows([]);
-    setFileName('');
-    setResult(null);
-  };
+  const reset = () => { setStep(1); setRows([]); setFileName(''); setResult(null); };
+
+  const TABS = [
+    { id: 'import', label: 'Nouvel import' },
+    { id: 'transactions', label: `Transactions (${transactions.length})` },
+    { id: 'virements', label: `Virements${transferCandidates.length > 0 ? ` (${transferCandidates.length})` : ''}` },
+  ];
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto pb-24 md:pb-6">
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-900">Import bancaire</h2>
-        <p className="text-sm text-gray-500 mt-0.5">Importez vos relevés CSV et gérez vos transactions</p>
+        <p className="text-sm text-gray-500 mt-0.5">Centre de contrôle — imports, validation, doublons et virements internes</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-fit">
-        <button
-          onClick={() => setTab('import')}
-          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-            tab === 'import' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Nouvel import
-        </button>
-        <button
-          onClick={() => setTab('transactions')}
-          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-            tab === 'transactions' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Transactions ({transactions.length})
-        </button>
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-fit overflow-x-auto">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+              tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            } ${t.id === 'virements' && transferCandidates.length > 0 ? 'text-purple-600' : ''}`}
+          >
+            {t.id === 'virements' && transferCandidates.length > 0 && (
+              <span className="inline-block w-2 h-2 bg-purple-500 rounded-full mr-1.5" />
+            )}
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {/* ── Tab: Import ── */}
@@ -749,9 +780,7 @@ export default function Import({
             <div className="flex items-center gap-2 mb-6 text-sm">
               {[{ n: 1, label: 'Fichier' }, { n: 2, label: 'Prévisualisation' }].map(({ n, label }) => (
                 <div key={n} className="flex items-center gap-2">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                    step >= n ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-400'
-                  }`}>
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step >= n ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-400'}`}>
                     {n}
                   </div>
                   <span className={step >= n ? 'text-gray-800 font-medium' : 'text-gray-400'}>{label}</span>
@@ -760,28 +789,14 @@ export default function Import({
               ))}
             </div>
           )}
-
-          {step === 1 && (
-            <StepUpload
-              comptes={comptes}
-              onParsed={handleParsed}
-              existingHashes={existingHashes}
-              rules={rules}
-            />
-          )}
-
+          {step === 1 && <StepUpload comptes={comptes} onParsed={handleParsed} existingHashes={existingHashes} rules={rules} />}
           {step === 2 && (
             <StepPreview
-              rows={rows}
-              setRows={setRows}
-              fileName={fileName}
-              categories={categories}
-              onImport={handleImport}
-              onBack={() => setStep(1)}
-              importing={importing}
+              rows={rows} setRows={setRows} fileName={fileName}
+              categories={categories} onImport={handleImport}
+              onBack={() => setStep(1)} importing={importing}
             />
           )}
-
           {step === 3 && result && (
             <div className="max-w-md mx-auto text-center">
               <div className="card py-10 px-6">
@@ -818,6 +833,15 @@ export default function Import({
           categories={categories}
           updateTransaction={updateTransaction}
           deleteTransaction={deleteTransaction}
+        />
+      )}
+
+      {/* ── Tab: Virements internes ── */}
+      {tab === 'virements' && (
+        <VirementsList
+          transactions={transactions}
+          comptes={comptes}
+          updateTransaction={updateTransaction}
         />
       )}
     </div>

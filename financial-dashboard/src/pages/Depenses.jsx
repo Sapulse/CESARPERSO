@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
-import { Plus, Pencil, Trash2, TrendingDown, Filter, Download, ChevronLeft, ChevronRight, Target } from 'lucide-react';
+import { Plus, Pencil, Trash2, TrendingDown, Filter, Download, ChevronLeft, ChevronRight, Target, Upload, EyeOff } from 'lucide-react';
 import Modal from '../components/shared/Modal';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 import { FREQUENCES, TYPES_DEPENSE, NATURES } from '../utils/defaults';
 import { fmt } from '../utils/calculations';
 import { downloadCSV } from '../utils/exportCSV';
+import { STATUTS } from './Import';
 
 const EMPTY_FORM = {
   libelle: '', montant: '', date: new Date().toISOString().slice(0, 10),
@@ -82,7 +83,110 @@ function monthLabel(ym) {
   return new Date(+y, +m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 }
 
-export default function Depenses({ depenses, categories, settings, updateSettings, addDepense, updateDepense, deleteDepense }) {
+function StatutBadge({ status }) {
+  const s = STATUTS.find(x => x.value === status);
+  if (!s || status === 'validee') return null;
+  return <span className={`inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${s.color}`}>{s.label}</span>;
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// Edit modal for imported transactions (all fields)
+function EditTxModal({ tx, categories, comptes, onSave, onClose }) {
+  const [form, setForm] = useState({
+    libelle: tx.libelle || '',
+    montant: Math.abs(tx.montant) ?? '',
+    date: tx.date || '',
+    categorie: tx.categorie || '',
+    nature: tx.nature || 'perso',
+    status: tx.status || 'validee',
+    compteId: tx.compteId || '',
+    note: tx.note || '',
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3 max-h-[90vh] overflow-y-auto">
+        <h3 className="font-semibold text-gray-900">Modifier la dépense importée</h3>
+        <div>
+          <label className="label">Libellé</label>
+          <input className="input" value={form.libelle} onChange={e => set('libelle', e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Montant (€)</label>
+            <input className="input" type="number" min="0" step="0.01" value={form.montant} onChange={e => set('montant', e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Date</label>
+            <input className="input" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Catégorie</label>
+            <select className="input" value={form.categorie} onChange={e => set('categorie', e.target.value)}>
+              <option value="">— Aucune</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Nature</label>
+            <select className="input" value={form.nature} onChange={e => set('nature', e.target.value)}>
+              {NATURES.map(n => <option key={n.value} value={n.value}>{n.label}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Statut</label>
+            <select className="input" value={form.status} onChange={e => set('status', e.target.value)}>
+              {STATUTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+          {comptes?.length > 0 && (
+            <div>
+              <label className="label">Compte</label>
+              <select className="input" value={form.compteId} onChange={e => set('compteId', e.target.value)}>
+                <option value="">— Compte</option>
+                {comptes.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        <div>
+          <label className="label">Note</label>
+          <input className="input" placeholder="Note optionnelle" value={form.note} onChange={e => set('note', e.target.value)} />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button className="btn-secondary flex-1" onClick={onClose}>Annuler</button>
+          <button className="btn-primary flex-1" onClick={() => {
+            const newMontant = parseFloat(form.montant);
+            onSave(tx.id, {
+              libelle: form.libelle,
+              // keep negative sign for debit transactions
+              montant: tx.montant < 0 ? -Math.abs(newMontant) : newMontant,
+              date: form.date,
+              categorie: form.categorie,
+              nature: form.nature,
+              status: form.status,
+              compteId: form.compteId,
+              note: form.note,
+              autoDetected: false,
+            });
+            onClose();
+          }}>Sauvegarder</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Depenses({ depenses, categories, settings, updateSettings, addDepense, updateDepense, deleteDepense, transactions = [], comptes = [], updateTransaction }) {
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [search, setSearch] = useState('');
@@ -92,6 +196,10 @@ export default function Depenses({ depenses, categories, settings, updateSetting
   const [showFilters, setShowFilters] = useState(false);
   const [monthFilter, setMonthFilter] = useState('');
   const [showBudgets, setShowBudgets] = useState(false);
+  const [showImported, setShowImported] = useState(true);
+  const [txMonthFilter, setTxMonthFilter] = useState('');
+  const [txCatFilter, setTxCatFilter] = useState('');
+  const [editTx, setEditTx] = useState(null);
 
   const budgetsCibles = settings?.budgetsCibles || {};
 
@@ -149,6 +257,20 @@ export default function Depenses({ depenses, categories, settings, updateSetting
         return { cat, spent, budget, pct };
       });
   }, [categories, depenses, budgetsCibles]);
+
+  // Imported debit transactions (excludes ignored and internal transfers)
+  const importedDebits = useMemo(() => {
+    return [...transactions]
+      .filter(t => t.montant < 0 && t.status !== 'ignoree' && t.status !== 'transfert_interne')
+      .filter(t => !txMonthFilter || t.date?.startsWith(txMonthFilter))
+      .filter(t => !txCatFilter || t.categorie === txCatFilter)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [transactions, txMonthFilter, txCatFilter]);
+
+  const txMonths = useMemo(() => {
+    const set = new Set(transactions.filter(t => t.montant < 0).map(t => t.date?.slice(0, 7)).filter(Boolean));
+    return [...set].sort().reverse();
+  }, [transactions]);
 
   const handleSave = (data) => {
     if (modal.mode === 'add') addDepense(data);
@@ -374,6 +496,102 @@ export default function Depenses({ depenses, categories, settings, updateSetting
         </div>
       )}
 
+      {/* ── Imported transactions section ── */}
+      {transactions.length > 0 && (
+        <div className="mt-8">
+          <button
+            className="flex items-center gap-2 w-full text-left mb-3"
+            onClick={() => setShowImported(v => !v)}
+          >
+            <Upload size={15} className="text-blue-500" />
+            <h3 className="font-semibold text-gray-800 flex-1">
+              Dépenses bancaires importées
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                ({transactions.filter(t => t.montant < 0 && t.status !== 'ignoree' && t.status !== 'transfert_interne').length} opérations)
+              </span>
+            </h3>
+            <span className="text-xs text-gray-400">{showImported ? '▲ Masquer' : '▼ Afficher'}</span>
+          </button>
+
+          {showImported && (
+            <>
+              {/* Filters */}
+              <div className="flex flex-wrap gap-2 mb-3">
+                <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={txMonthFilter} onChange={e => setTxMonthFilter(e.target.value)}>
+                  <option value="">Tous les mois</option>
+                  {txMonths.map(m => {
+                    const [y, mo] = m.split('-');
+                    const label = new Date(parseInt(y), parseInt(mo) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                    return <option key={m} value={m}>{label}</option>;
+                  })}
+                </select>
+                <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={txCatFilter} onChange={e => setTxCatFilter(e.target.value)}>
+                  <option value="">Toutes catégories</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                {(txMonthFilter || txCatFilter) && (
+                  <button className="btn-secondary text-xs" onClick={() => { setTxMonthFilter(''); setTxCatFilter(''); }}>Effacer</button>
+                )}
+              </div>
+
+              {importedDebits.length === 0 ? (
+                <div className="card text-center py-6 text-gray-400 text-sm">
+                  Aucune dépense importée{txMonthFilter || txCatFilter ? ' pour ce filtre' : ''}.
+                </div>
+              ) : (
+                <div className="card p-0 overflow-hidden">
+                  <div className="divide-y divide-gray-50">
+                    {importedDebits.map(tx => {
+                      const cat = getCat(tx.categorie);
+                      const compte = comptes.find(c => c.id === tx.compteId);
+                      return (
+                        <div key={tx.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group">
+                          <div className="w-2.5 h-10 rounded-full shrink-0" style={{ background: cat?.color || '#cbd5e1' }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium text-gray-800 truncate">{tx.libelle}</p>
+                              {cat && cat.id !== 'a_classer' && (
+                                <span className="text-xs text-gray-500">{cat.name}</span>
+                              )}
+                              {tx.nature === 'pro' && (
+                                <span className="badge bg-purple-50 text-purple-700">Pro</span>
+                              )}
+                              <StatutBadge status={tx.status} />
+                              <span className="text-[10px] bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded-full shrink-0">CSV</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {formatDate(tx.date)}
+                              {compte && <span className="ml-2" style={{ color: compte.couleur || '#3b82f6' }}>● {compte.nom}</span>}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="font-bold text-red-600">{fmt(Math.abs(tx.montant))}</p>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            {updateTransaction && (
+                              <button className="btn-ghost p-1.5" onClick={() => setEditTx(tx)}>
+                                <Pencil size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Totals for imported */}
+              {importedDebits.length > 0 && (
+                <p className="text-xs text-gray-500 mt-2 text-right">
+                  Total affiché : <span className="font-semibold text-red-600">{fmt(importedDebits.reduce((s, t) => s + Math.abs(t.montant), 0))}</span>
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.mode === 'add' ? 'Ajouter une dépense' : 'Modifier la dépense'} size="lg" confirmClose>
         {modal && (
           <DepenseForm
@@ -392,6 +610,16 @@ export default function Depenses({ depenses, categories, settings, updateSetting
         title="Supprimer cette dépense"
         message={`Voulez-vous supprimer "${deleteTarget?.libelle}" (${deleteTarget ? fmt(deleteTarget.montant) : ''}) ?`}
       />
+
+      {editTx && updateTransaction && (
+        <EditTxModal
+          tx={editTx}
+          categories={categories}
+          comptes={comptes}
+          onSave={updateTransaction}
+          onClose={() => setEditTx(null)}
+        />
+      )}
     </div>
   );
 }

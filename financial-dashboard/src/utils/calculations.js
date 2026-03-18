@@ -154,3 +154,51 @@ export function fmt(amount) {
     maximumFractionDigits: 0,
   }).format(amount);
 }
+
+/**
+ * Sum validated (non-ignored, non-transfer) transactions for a given month.
+ * Returns { credits, debits } where debits is a positive number.
+ */
+export function calcTransactionStats(transactions, date) {
+  const monthStr = (date instanceof Date ? date : new Date(date)).toISOString().slice(0, 7);
+  const active = transactions.filter(t =>
+    t.date?.startsWith(monthStr) &&
+    t.status !== 'ignoree' &&
+    t.status !== 'transfert_interne'
+  );
+  const credits = active.filter(t => t.montant > 0).reduce((s, t) => s + t.montant, 0);
+  const debits = Math.abs(active.filter(t => t.montant < 0).reduce((s, t) => s + t.montant, 0));
+  return { credits, debits };
+}
+
+/**
+ * Detect candidate internal transfers: debit on one account ≈ credit on another
+ * within toleranceDays days and same amount (±toleranceEur).
+ */
+export function detectTransferCandidates(transactions, toleranceDays = 3, toleranceEur = 0.02) {
+  const active = transactions.filter(t =>
+    t.status !== 'transfert_interne' && t.status !== 'ignoree'
+  );
+  const debits = active.filter(t => t.montant < 0);
+  const credits = active.filter(t => t.montant > 0);
+
+  const pairs = [];
+  const usedCreditIds = new Set();
+
+  debits.forEach(debit => {
+    credits.forEach(credit => {
+      if (usedCreditIds.has(credit.id)) return;
+      if (debit.compteId === credit.compteId) return; // same account — not a transfer
+      if (Math.abs(Math.abs(debit.montant) - credit.montant) > toleranceEur) return;
+      const d1 = new Date(debit.date);
+      const d2 = new Date(credit.date);
+      const daysDiff = Math.abs((d1 - d2) / (1000 * 60 * 60 * 24));
+      if (daysDiff <= toleranceDays) {
+        pairs.push({ debit, credit, daysDiff });
+        usedCreditIds.add(credit.id);
+      }
+    });
+  });
+
+  return pairs;
+}

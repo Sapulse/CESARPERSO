@@ -215,7 +215,9 @@ export function useAppData() {
     rows.forEach(row => {
       if (existingHashes.has(row.hash)) return;
       const id = uid();
-      batch[`transactions/${id}`] = { ...row, id };
+      // status: 'a_classer' if no category matched, 'validee' otherwise
+      const status = (!row.categorie || row.categorie === 'a_classer') ? 'a_classer' : 'validee';
+      batch[`transactions/${id}`] = { ...row, id, source: 'import_csv', status };
       count++;
     });
 

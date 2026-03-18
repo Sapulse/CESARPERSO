@@ -44,6 +44,10 @@ export default function App() {
             addRevenu={data.addRevenu}
             updateRevenu={data.updateRevenu}
             deleteRevenu={data.deleteRevenu}
+            transactions={data.transactions}
+            comptes={data.comptes}
+            categories={data.categories}
+            updateTransaction={data.updateTransaction}
           />
         );
       case 'depenses':
@@ -56,6 +60,9 @@ export default function App() {
             addDepense={data.addDepense}
             updateDepense={data.updateDepense}
             deleteDepense={data.deleteDepense}
+            transactions={data.transactions}
+            comptes={data.comptes}
+            updateTransaction={data.updateTransaction}
           />
         );
       case 'previsionnel':

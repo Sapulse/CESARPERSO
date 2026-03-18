@@ -2,13 +2,18 @@ import { useMemo } from 'react';
 import { Wallet, TrendingUp, TrendingDown, Shield, Clock, AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import KPICard from '../components/shared/KPICard';
-import { calcCurrentMonthStats, buildProjection, calcDepensesParCategorie, fmt } from '../utils/calculations';
+import { calcCurrentMonthStats, buildProjection, calcDepensesParCategorie, calcTransactionStats, fmt } from '../utils/calculations';
 import { TYPES_COMPTE } from '../utils/defaults';
 
 export default function Dashboard({ revenus, depenses, settings, categories, comptes, transactions, onNavigate }) {
   const stats = useMemo(() => calcCurrentMonthStats(revenus, depenses, settings), [revenus, depenses, settings]);
+  const txStats = useMemo(() => calcTransactionStats(transactions || [], new Date()), [transactions]);
   const projection = useMemo(() => buildProjection(revenus, depenses, settings, 6), [revenus, depenses, settings]);
   const topCats = useMemo(() => calcDepensesParCategorie(depenses, categories, new Date()), [depenses, categories]);
+
+  // Consolidated monthly totals (manual + imported)
+  const revenusMoisConsolide = stats.revenusMois + txStats.credits;
+  const depensesMoisConsolide = stats.depensesMois + txStats.debits;
 
   const autonomieOk = stats.autonomie > 3;
   const autonomieWarn = stats.autonomie > 1 && stats.autonomie <= 3;
@@ -74,17 +79,17 @@ export default function Dashboard({ revenus, depenses, settings, categories, com
         />
         <KPICard
           title="Revenus du mois"
-          value={fmt(stats.revenusMois)}
+          value={fmt(revenusMoisConsolide)}
           icon={TrendingUp}
           color="green"
-          subtitle="Ce mois-ci"
+          subtitle={txStats.credits > 0 ? `dont ${fmt(txStats.credits)} importés` : 'Ce mois-ci'}
         />
         <KPICard
           title="Dépenses du mois"
-          value={fmt(stats.depensesMois)}
+          value={fmt(depensesMoisConsolide)}
           icon={TrendingDown}
           color="red"
-          subtitle="Ce mois-ci"
+          subtitle={txStats.debits > 0 ? `dont ${fmt(txStats.debits)} importées` : 'Ce mois-ci'}
         />
         <KPICard
           title="Charges à provisionner"

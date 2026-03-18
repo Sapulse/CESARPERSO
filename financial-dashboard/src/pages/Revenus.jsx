@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
-import { Plus, Pencil, Trash2, TrendingUp, RepeatIcon, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, TrendingUp, RepeatIcon, Download, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import Modal from '../components/shared/Modal';
 import ConfirmDialog from '../components/shared/ConfirmDialog';
 import { FREQUENCES, TYPES_REVENU } from '../utils/defaults';
 import { fmt } from '../utils/calculations';
 import { downloadCSV } from '../utils/exportCSV';
+import { STATUTS } from './Import';
 
 const EMPTY_FORM = { libelle: '', montant: '', date: new Date().toISOString().slice(0, 10), frequence: 'mensuelle', type: 'ca', note: '' };
 
@@ -65,11 +66,107 @@ function monthLabel(ym) {
   return new Date(+y, +m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 }
 
-export default function Revenus({ revenus, addRevenu, updateRevenu, deleteRevenu }) {
+function StatutBadge({ status }) {
+  const s = STATUTS.find(x => x.value === status);
+  if (!s || status === 'validee') return null;
+  return <span className={`inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${s.color}`}>{s.label}</span>;
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// Edit modal for imported credit transactions
+function EditTxModal({ tx, categories, comptes, onSave, onClose }) {
+  const [form, setForm] = useState({
+    libelle: tx.libelle || '',
+    montant: tx.montant ?? '',
+    date: tx.date || '',
+    categorie: tx.categorie || '',
+    nature: tx.nature || 'perso',
+    status: tx.status || 'validee',
+    compteId: tx.compteId || '',
+    note: tx.note || '',
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end md:items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3 max-h-[90vh] overflow-y-auto">
+        <h3 className="font-semibold text-gray-900">Modifier le revenu importé</h3>
+        <div>
+          <label className="label">Libellé</label>
+          <input className="input" value={form.libelle} onChange={e => set('libelle', e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Montant (€)</label>
+            <input className="input" type="number" min="0" step="0.01" value={form.montant} onChange={e => set('montant', e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Date</label>
+            <input className="input" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label">Catégorie</label>
+            <select className="input" value={form.categorie} onChange={e => set('categorie', e.target.value)}>
+              <option value="">— Aucune</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Statut</label>
+            <select className="input" value={form.status} onChange={e => set('status', e.target.value)}>
+              {STATUTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+        </div>
+        {comptes?.length > 0 && (
+          <div>
+            <label className="label">Compte</label>
+            <select className="input" value={form.compteId} onChange={e => set('compteId', e.target.value)}>
+              <option value="">— Compte</option>
+              {comptes.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="label">Note</label>
+          <input className="input" placeholder="Note optionnelle" value={form.note} onChange={e => set('note', e.target.value)} />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button className="btn-secondary flex-1" onClick={onClose}>Annuler</button>
+          <button className="btn-primary flex-1" onClick={() => {
+            onSave(tx.id, {
+              libelle: form.libelle,
+              montant: parseFloat(form.montant) || tx.montant,
+              date: form.date,
+              categorie: form.categorie,
+              nature: form.nature,
+              status: form.status,
+              compteId: form.compteId,
+              note: form.note,
+              autoDetected: false,
+            });
+            onClose();
+          }}>Sauvegarder</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Revenus({ revenus, addRevenu, updateRevenu, deleteRevenu, transactions = [], comptes = [], categories = [], updateTransaction }) {
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [filter, setFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
+  const [showImported, setShowImported] = useState(true);
+  const [txMonthFilter, setTxMonthFilter] = useState('');
+  const [editTx, setEditTx] = useState(null);
 
   const freqLabel = (v) => FREQUENCES.find(f => f.value === v)?.label || v;
   const typeLabel = (v) => TYPES_REVENU.find(t => t.value === v)?.label || v;
@@ -101,6 +198,19 @@ export default function Revenus({ revenus, addRevenu, updateRevenu, deleteRevenu
       return sum + r.montant;
     }, 0);
   }, [filtered]);
+
+  // Imported credit transactions (excludes ignored and internal transfers)
+  const importedCredits = useMemo(() => {
+    return [...transactions]
+      .filter(t => t.montant > 0 && t.status !== 'ignoree' && t.status !== 'transfert_interne')
+      .filter(t => !txMonthFilter || t.date?.startsWith(txMonthFilter))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [transactions, txMonthFilter]);
+
+  const txMonths = useMemo(() => {
+    const set = new Set(transactions.filter(t => t.montant > 0).map(t => t.date?.slice(0, 7)).filter(Boolean));
+    return [...set].sort().reverse();
+  }, [transactions]);
 
   const handleSave = (data) => {
     if (modal.mode === 'add') addRevenu(data);
@@ -231,6 +341,93 @@ export default function Revenus({ revenus, addRevenu, updateRevenu, deleteRevenu
         </div>
       )}
 
+      {/* ── Imported credit transactions ── */}
+      {transactions.length > 0 && (
+        <div className="mt-8">
+          <button
+            className="flex items-center gap-2 w-full text-left mb-3"
+            onClick={() => setShowImported(v => !v)}
+          >
+            <Upload size={15} className="text-green-500" />
+            <h3 className="font-semibold text-gray-800 flex-1">
+              Revenus bancaires importés
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                ({transactions.filter(t => t.montant > 0 && t.status !== 'ignoree' && t.status !== 'transfert_interne').length} opérations)
+              </span>
+            </h3>
+            <span className="text-xs text-gray-400">{showImported ? '▲ Masquer' : '▼ Afficher'}</span>
+          </button>
+
+          {showImported && (
+            <>
+              <div className="flex flex-wrap gap-2 mb-3">
+                <select className="input text-sm py-1.5 flex-1 min-w-[130px]" value={txMonthFilter} onChange={e => setTxMonthFilter(e.target.value)}>
+                  <option value="">Tous les mois</option>
+                  {txMonths.map(m => {
+                    const [y, mo] = m.split('-');
+                    const label = new Date(parseInt(y), parseInt(mo) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                    return <option key={m} value={m}>{label}</option>;
+                  })}
+                </select>
+                {txMonthFilter && <button className="btn-secondary text-xs" onClick={() => setTxMonthFilter('')}>Effacer</button>}
+              </div>
+
+              {importedCredits.length === 0 ? (
+                <div className="card text-center py-6 text-gray-400 text-sm">
+                  Aucun revenu importé{txMonthFilter ? ' pour ce mois' : ''}.
+                </div>
+              ) : (
+                <div className="card p-0 overflow-hidden">
+                  <div className="divide-y divide-gray-50">
+                    {importedCredits.map(tx => {
+                      const cat = categories.find(c => c.id === tx.categorie);
+                      const compte = comptes.find(c => c.id === tx.compteId);
+                      return (
+                        <div key={tx.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group">
+                          <div className="p-2 bg-green-50 rounded-lg shrink-0">
+                            <TrendingUp size={16} className="text-green-500" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium text-gray-800 truncate">{tx.libelle}</p>
+                              {cat && cat.id !== 'a_classer' && (
+                                <span className="text-xs text-gray-500">{cat.name}</span>
+                              )}
+                              <StatutBadge status={tx.status} />
+                              <span className="text-[10px] bg-green-50 text-green-500 px-1.5 py-0.5 rounded-full shrink-0">CSV</span>
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-0.5">
+                              {formatDate(tx.date)}
+                              {compte && <span className="ml-2" style={{ color: compte.couleur || '#3b82f6' }}>● {compte.nom}</span>}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="font-bold text-green-600">+{fmt(tx.montant)}</p>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            {updateTransaction && (
+                              <button className="btn-ghost p-1.5" onClick={() => setEditTx(tx)}>
+                                <Pencil size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {importedCredits.length > 0 && (
+                <p className="text-xs text-gray-500 mt-2 text-right">
+                  Total affiché : <span className="font-semibold text-green-600">+{fmt(importedCredits.reduce((s, t) => s + t.montant, 0))}</span>
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <Modal
         open={!!modal}
         onClose={() => setModal(null)}
@@ -253,6 +450,16 @@ export default function Revenus({ revenus, addRevenu, updateRevenu, deleteRevenu
         title="Supprimer ce revenu"
         message={`Voulez-vous supprimer "${deleteTarget?.libelle}" (${deleteTarget ? fmt(deleteTarget.montant) : ''}) ?`}
       />
+
+      {editTx && updateTransaction && (
+        <EditTxModal
+          tx={editTx}
+          categories={categories}
+          comptes={comptes}
+          onSave={updateTransaction}
+          onClose={() => setEditTx(null)}
+        />
+      )}
     </div>
   );
 }
